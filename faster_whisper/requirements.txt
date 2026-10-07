@@ -1,0 +1,41 @@
+# whisper-batch10.py 用到两件第三方库：faster_whisper（第 8 行）和 send2trash（第 7 行），
+# 其余全是标准库。装 faster-whisper 会自动带进 ctranslate2 / av / tokenizers /
+# huggingface_hub / onnxruntime，所以下面把它们分成"直接依赖"和"实测在位的传递依赖"两档。
+#
+# 版本口径：这批数字是 2026-10-07 从作者生产机
+#   %LOCALAPPDATA%\Programs\Python\Python313\Lib\site-packages\*.dist-info
+# 的目录名直接读出来的（A 级：那是产线实际在位的那份），不是 pip 解析出来的期望值。
+# faster-whisper 1.2.1 的 METADATA 写 Requires-Python: >=3.9、
+# Requires-Dist: ctranslate2<5,>=4.0 / huggingface_hub>=0.13 / tokenizers>=0.12 /
+# onnxruntime>=1.14 / av>=11（同一次读盘拿到的）。
+# 换机器时最稳的做法是先 `pip install faster-whisper` 不带版本号，让解析器自己配；
+# 要严格复刻产线就照下面这组钉死。
+
+faster-whisper==1.2.1
+ctranslate2==4.7.1
+send2trash==2.1.0
+
+# --- 传递依赖，作者机上实测在位的版本（钉不钉都行，钉了就是逐字复刻）---
+av==16.1.0
+tokenizers==0.22.2
+huggingface_hub==1.5.0
+onnxruntime==1.24.2
+numpy==2.4.2
+
+# ==================== GPU 这一档还要的东西（pip 装不到，看这里）====================
+#
+# ctranslate2 4.x 的 CUDA 后端在运行时找 cuDNN 9 + cuBLAS 12，必须是【进程能搜到的位置】。
+# 作者机上是装在 Windows 系统目录（System32） 的（随 NVIDIA CUDA Toolkit / cuDNN 安装包进去的），
+# 没有装 nvidia-cudnn-cu12 / nvidia-cublas-cu12 这两个 pip 包。
+# 两条路任选：
+#   A) 装 NVIDIA 官方 cuDNN 9 + CUDA 12 运行库（要登录，没有匿名直链 → assets.json 里
+#      那条 manual 只能给人工，--check 对它只给 WARN）。
+#   B) pip install nvidia-cudnn-cu12 nvidia-cublas-cu12，再把 site-packages\nvidia\*\bin
+#      加进 PATH（或按 ctranslate2 文档用 --extra-index-url 那套）。
+# 注意别和 CrispASR 的 GPU 档混：本仓 CrispASR-FireRed/ 和 CrispASR-Qwen/ 用的 cublas64_12.dll
+# 是 CrispASR release 附带的那三件（113,712,640 B），和 System32 里这套（113,716,224 B）
+# 差 3,584 B，不是同一版。
+#
+# 【B 级，未在这台机器上核过】Linux 上 PyPI 默认轮子的 ctranslate2 可能是 CPU 构建，
+# 要在 Linux 上吃 CUDA 得按 ctranslate2 自己的发布说明取对应构建；这台机器只跑过 Windows。
+# 纯 CPU 的机器请直接用仓库 cpu 分支，不要靠这条链跑 GPU 档。

@@ -1,0 +1,14 @@
+# 跑 crispasr-Qwen.py 只需要这一件第三方库，其余全是标准库。
+#
+# 驱动本身只用 ctypes/logging/os/re/signal/subprocess/sys/tempfile/threading/time/
+# urllib.request/contextlib/datetime/pathlib（+ Windows 上的 msvcrt、Linux 上的 fcntl），
+# ntfy 推送走 urllib，不引第三方 HTTP 客户端。
+# 转写引擎是 crispasr.exe（C/C++ 二进制，见 assets.json），pip 里没有它，也不需要
+# CUDA 相关的 python 包 —— ctranslate2 那套只属于 faster_whisper/ 那条链。
+#
+# send2trash 是必需件：驱动第 44 行是模块级 import，装不上就直接 ImportError 起不来
+# （不会退化成"源文件保留不删"——那是别的驱动的做法，这份没有）。
+#
+# 解释器：3.13 实测在跑（作者生产机用的是一份免安装/embeddable 3.13，放在自己的 asr 目录里）。
+# 2.1.0 = 2026-10-07 本机 pip 元数据里实际在位的版本。
+Send2Trash==2.1.0

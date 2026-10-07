@@ -1,0 +1,23 @@
+# 环境与缓存
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# fetch_assets.py 的落点与中间件一律不进库（清单只存 URL + 字节数 + sha256）。
+# 注意 FireRed-ONNX/ 自己那份 .gitignore 还管着 models/ 的例外（里面有两个是源码文本）。
+crispasr/
+model/
+*.part
+*.zip
+*.gguf
+*.bin
+*.dll
+*.exe
+
+# 运行产物
+*.log
+.lock
+STOP
+no_speech.txt

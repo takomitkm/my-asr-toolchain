@@ -1,0 +1,218 @@
+{
+ "engine": "CrispASR / firered-asr（CUDA）",
+ "driver": "xhs-asr.py",
+ "branch": "gpu",
+ "note": "主引擎 FireRedASR2-AED + 兜底 qwen3 的双引擎驱动。兜底档在判到 AED 语种范围外时才用，所以 qwen3 那份权重也是必须组件。",
+ "roots": {
+  "bin": {
+   "default": "crispasr",
+   "env": "CRISPASR_BIN_DIR",
+   "label": "crispasr 程序目录（驱动 CONFIG 里的 CRISPASR_BIN_DIR）"
+  },
+  "model": {
+   "default": "model",
+   "env": "CRISPASR_MODEL_DIR",
+   "label": "模型目录（驱动 CONFIG 里的 MODEL_DIR）"
+  }
+ },
+ "items": [
+  {
+   "name": "crispasr_cuda_build",
+   "kind": "zip",
+   "root": "bin",
+   "path": "crispasr-windows-x86_64-cuda-non-cuda.zip",
+   "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/crispasr-windows-x86_64-cuda-non-cuda.zip",
+   "bytes": 146153022,
+   "sha256": "74d04c30034f33c6270df294bb4b66f98c05fd152f4846b81ddeef0a7f62d712",
+   "zip_prefix": "crispasr-windows-x86_64-cuda-non-cuda/",
+   "grade": "A",
+   "license": "MIT（CrispASR）",
+   "members": [
+    {
+     "path": "crispasr-quantize.exe",
+     "bytes": 133120,
+     "sha256": "fad44279486728e414e2ae4074df5a34b489acc3d1e3bb6afd1576d9fcab148b"
+    },
+    {
+     "path": "crispasr.dll",
+     "bytes": 16686592,
+     "sha256": "032ed47f453d429bae8238803e15aebf602dfa6010a47ab2b795d55b06c6854f"
+    },
+    {
+     "path": "crispasr.exe",
+     "bytes": 13134848,
+     "sha256": "a80d59b43374566fd50c2355ad288ddfba19f7c23320738e493a68247996c6a2"
+    },
+    {
+     "path": "ggml-base.dll",
+     "bytes": 677888,
+     "sha256": "9daa9fbb86dcb3f1faf4fb3e8fdd45af2d904db6601df7e7b78480a4d2defcc4"
+    },
+    {
+     "path": "ggml-cpu.dll",
+     "bytes": 962560,
+     "sha256": "3b1fa10a8f037ed619a6285e12183d6a2cd97cbf22873ee761b7997c14604927"
+    },
+    {
+     "path": "ggml-cuda.dll",
+     "bytes": 139423232,
+     "sha256": "24ab50548703e6640726251ae31cc26c70a33806beae2209c8660c1968fea370"
+    },
+    {
+     "path": "ggml.dll",
+     "bytes": 61952,
+     "sha256": "97436f651eb1fb5b9e4d983bce9f4a8d213043f393189d29b6716cf1d15d9343"
+    },
+    {
+     "path": "LICENSE",
+     "bytes": 1099,
+     "sha256": "bcd8ec749126d45cb06737d0690295d73df4b6e7e194205bcf91190368f27285"
+    },
+    {
+     "path": "README-CUDA.txt",
+     "bytes": 283,
+     "sha256": "a26035af8c33f22c57a9801875bd9d3546e6fe8ced7e1c1f832b05acbc70b7d9"
+    },
+    {
+     "path": "THIRD_PARTY_NOTICES.txt",
+     "bytes": 33137,
+     "sha256": "e2e6c80df7db63f1279d31d2fe17d5c703a8b10c247d1cf49623e68a254074f6"
+    },
+    {
+     "path": "whisper.dll",
+     "bytes": 16686592,
+     "sha256": "032ed47f453d429bae8238803e15aebf602dfa6010a47ab2b795d55b06c6854f"
+    }
+   ],
+   "note": "这是【刻意不含 CUDA 运行库】的那份包：zip 自身的 sha256 是 GitHub release 给的 digest，11 个成员的 sha256 从 zip 里逐成员算出，且与作者生产机上那一份（同版本程序目录里的 crispasr.exe 等）逐字节相同（14 个文件里除了下面 cuda_runtime_dlls 三件，其余 11 件就是本条的成员）。\n同页还有一份整包 crispasr-windows-x86_64-cuda.zip（726,337,534 B / 4711f0473ebc3b9b1f682a4891e2bbf21d3fd4d7fadaebb0891401fbae90936c），它把 CUDA 运行库一起打进来；两条路任选，本清单走的是 non-cuda + 三件独立 dll，因为那样每个文件都能单独核对哈希、断点续传也只重下 146 MB 而不是 726 MB。\n解完默认删 zip，--keep-zip 留着。"
+  },
+  {
+   "name": "cuda_runtime_cublas64_12_dll",
+   "kind": "file",
+   "root": "bin",
+   "path": "cublas64_12.dll",
+   "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/cublas64_12.dll",
+   "bytes": 113712640,
+   "sha256": "0a60a7ecbf906f7f3842826fecaf412f1587ff6269729339245a1ec224364161",
+   "grade": "A",
+   "license": "NVIDIA CUDA Toolkit EULA",
+   "note": "CrispASR 的 release 把这三个 dll 作为独立资源附带，并给了自己的清单 https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/crispasr-windows-x86_64-cuda-runtime-sha256.txt（251 B / 92e425619074390a7e0350aeef1605b6063cca47b9bfa41a70cbd37261d13f83），本条的 bytes/sha256 就是那张清单里 cublas64_12.dll 那一行；作者生产机那份逐字节相同。"
+  },
+  {
+   "name": "cuda_runtime_cublasLt64_12_dll",
+   "kind": "file",
+   "root": "bin",
+   "path": "cublasLt64_12.dll",
+   "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/cublasLt64_12.dll",
+   "bytes": 692441600,
+   "sha256": "a21ddfc1c9cd090ab07d2c6aad235aa4f15fe60fe896d5db28adf7a279c09ef3",
+   "grade": "A",
+   "license": "NVIDIA CUDA Toolkit EULA",
+   "note": "CrispASR 的 release 把这三个 dll 作为独立资源附带，并给了自己的清单 https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/crispasr-windows-x86_64-cuda-runtime-sha256.txt（251 B / 92e425619074390a7e0350aeef1605b6063cca47b9bfa41a70cbd37261d13f83），本条的 bytes/sha256 就是那张清单里 cublasLt64_12.dll 那一行；作者生产机那份逐字节相同。"
+  },
+  {
+   "name": "cuda_runtime_cudart64_12_dll",
+   "kind": "file",
+   "root": "bin",
+   "path": "cudart64_12.dll",
+   "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/cudart64_12.dll",
+   "bytes": 573952,
+   "sha256": "9d9b868955149875ac4ef43442aaaa8913d4a7b3e4d6dd60ee871626aa045768",
+   "grade": "A",
+   "license": "NVIDIA CUDA Toolkit EULA",
+   "note": "CrispASR 的 release 把这三个 dll 作为独立资源附带，并给了自己的清单 https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/crispasr-windows-x86_64-cuda-runtime-sha256.txt（251 B / 92e425619074390a7e0350aeef1605b6063cca47b9bfa41a70cbd37261d13f83），本条的 bytes/sha256 就是那张清单里 cudart64_12.dll 那一行；作者生产机那份逐字节相同。"
+  },
+  {
+   "name": "msvc_runtime_dlls",
+   "kind": "manual",
+   "root": "bin",
+   "grade": "C",
+   "license": "Microsoft Visual C++ Redistributable 可再分发协议（随 vc_redist 分发）",
+   "members": [
+    {
+     "path": "msvcp140.dll",
+     "bytes": 553552,
+     "sha256": "def46aa6a8f72f27bafac0c43334419486a4d1dcdb6c479a8ef7034b3e1fa4cb"
+    },
+    {
+     "path": "vcomp140.dll",
+     "bytes": 213064,
+     "sha256": "31af29c03643f8396a6f26bcd601c6369d26493d7d78b714827ab2801bd284c7"
+    },
+    {
+     "path": "vcruntime140.dll",
+     "bytes": 123472,
+     "sha256": "184146852727a9db4eea06178716bec3cdbb1015c911f6b0f915b184ad7775b2"
+    },
+    {
+     "path": "vcruntime140_1.dll",
+     "bytes": 47264,
+     "sha256": "e6bfb3662ab4b1969a73441dbe35c96d51441b6bff8cf1fe7430bd5b246ca605"
+    }
+   ],
+   "note_short": "装 vc_redist.x64.exe，或把 msvcp140/vcomp140/vcruntime140/vcruntime140_1.dll 拷到 crispasr.exe 同目录",
+   "url": "https://aka.ms/vc14/vc_redist.x64.exe",
+   "note": "crispasr.exe 动态链 MSVC C++ 运行库。已实测：这一件不补，crispasr.exe 直接 rc=127，报 api-ms-win-crt-utility-l1-1-0.dll 找不到；补上后 rc=0。两条路任选：装系统级的 vc_redist.x64.exe（微软官方链接在上面），或把这 4 个 dll 拷到 crispasr.exe 同目录（Windows 先搜 exe 所在目录，不用动 PATH）。微软不把这几个 dll 做成可匿名直链的独立文件（NuGet 上相关包 404 已实测），所以只能人工，--check 对这一条只给 WARN 不算失败。作者生产机的 crispasr 目录里【没有】这 4 个 dll（2026-10-07 静态对拍：那台机器上的 crispasr 程序目录是 14 件 = zip 的 11 件 + cuda 的 3 件），因为系统装了 redist；纯 CPU 校机上是我把这 4 件拷进 exe 同目录才 rc=0 的。两种做法都算过。"
+  },
+  {
+   "name": "firered_asr2_aed_q4_k",
+   "kind": "file",
+   "root": "model",
+   "path": "firered-asr2-aed-q4_k.gguf",
+   "url": "https://huggingface.co/cstr/firered-asr2-aed-GGUF/resolve/main/firered-asr2-aed-q4_k.gguf",
+   "bytes": 962807328,
+   "sha256": "c5f40fe5b467296395027c7397d87043a39e3223fcd049056ed5ba88974e9e0d",
+   "grade": "A",
+   "license": "Apache-2.0（FireRedASR2 上游）/ 量化件由 CrispASR 侧发布",
+   "note": "驱动 CONFIG 里的 CRISPASR_MODEL_AED。sha256 就是 HuggingFace 的 LFS oid（api/models/cstr/firered-asr2-aed-GGUF/tree/main 里 lfs.oid 字段），与作者生产机那份逐字节相同。也就是 CrispASR 自己 -m auto 注册表 firered-asr 那一行。"
+  },
+  {
+   "name": "fireredpunc_q8_0",
+   "kind": "file",
+   "root": "model",
+   "path": "fireredpunc-q8_0.gguf",
+   "url": "https://huggingface.co/cstr/fireredpunc-GGUF/resolve/main/fireredpunc-q8_0.gguf",
+   "bytes": 108664800,
+   "sha256": "0d546cb44cf3692c6b25d3b02cf7a99c507e29176c260f3ea5d79ae7879d25b3",
+   "grade": "A",
+   "license": "BSD-2-Clause（FireRedPunc 上游）",
+   "note": "书面标点后处理，【只给 AED 引擎用】（qwen3 自己出标点）。这一件必须给本地路径：留空时 crispasr 会取 auto 并联网去下 FireRedPunc（crispasr_run.cpp:3940），拉不动的机器上每批白等一次超时。"
+  },
+  {
+   "name": "whisper_tiny_lid",
+   "kind": "file",
+   "root": "model",
+   "path": "ggml-tiny.bin",
+   "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+   "bytes": 77691713,
+   "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+   "grade": "A",
+   "license": "MIT（whisper.cpp）",
+   "note": "-l auto 时的前置语种判别器（models/download-ggml-model.sh:9 的 src 同仓）。必须给成本地文件，否则 crispasr 会去联网下、离线机器上卡满超时。语种写死（如 \"zh\"）时这件不参与拼命令，可以不下。"
+  },
+  {
+   "name": "firered_vad",
+   "kind": "file",
+   "root": "model",
+   "path": "firered-vad.gguf",
+   "url": "https://huggingface.co/cstr/firered-vad-GGUF/resolve/main/firered-vad.gguf",
+   "bytes": 2357952,
+   "sha256": "72d37db1a5d2a9db386d1452b3f54d13f97bea79710105fc65acd050ea7db600",
+   "grade": "A",
+   "license": "BSD-2-Clause（FireRedVAD 上游）",
+   "note": "VAD 权重。选它而不是 crispasr 默认的 silero v6.2.0，因为 v6 对唱歌素材判 0 段（rc 仍为 0、不落 .txt ⇒ 整条静默丢弃）：同一条 60 s 日推歌曲副歌，firered 出 97 字真歌词、silero-v5 捡回 59 字、silero-v6 出 0 段。代价是多花约 31% 墙钟。驱动靠 no_speech.txt 给无语音文件记账。"
+  },
+  {
+   "name": "qwen3_asr_1_7b_q8_0",
+   "kind": "file",
+   "root": "model",
+   "path": "qwen3-asr-1.7b-q8_0.gguf",
+   "url": "https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF/resolve/main/qwen3-asr-1.7b-q8_0.gguf",
+   "bytes": 2506723200,
+   "sha256": "9851ab996591a2d0cb0efb216002764b509c86bd40c95e613d7b65b8e69c8a6e",
+   "grade": "A",
+   "license": "Apache-2.0（Qwen3-ASR 上游）",
+   "note": "兜底引擎 qwen3 的权重（驱动 CONFIG 里的 CRISPASR_MODEL_QWEN3）。显存不够就换同仓的 q4_k：1,490,915,200 B / ec197cef7ccc589fdcae1becc3f4a3de119d0a41e790b898b519b1a048dad8d4，换的时候 path 和 sha256 要一起改。"
+  }
+ ]
+}

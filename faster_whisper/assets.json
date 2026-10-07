@@ -1,0 +1,89 @@
+{
+ "engine": "faster-whisper / large-v3（CUDA）",
+ "driver": "whisper-batch10.py",
+ "branch": "gpu",
+ "note": "whisper 这一套是四台机器里最老、最轻的一条：一个 ct2 模型目录 + pip 包就能跑，VAD 与标点都靠 faster-whisper 自己。",
+ "roots": {
+  "model": {
+   "default": "model",
+   "env": "FASTER_WHISPER_MODEL_DIR",
+   "label": "ct2 模型目录（驱动 CONFIG 里的 MODEL_PATH）"
+  },
+  "system": {
+   "default": "system",
+   "env": "N/A",
+   "label": "系统位置（只用于 --check，不落文件）"
+  }
+ },
+ "items": [
+  {
+   "name": "faster_whisper_large_v3_model_bin",
+   "kind": "file",
+   "root": "model",
+   "path": "model.bin",
+   "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/model.bin",
+   "bytes": 3087284237,
+   "sha256": "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1",
+   "grade": "A",
+   "license": "MIT（模型）/ OpenAI Whisper 上游 MIT",
+   "note": "repo id = Systran/faster-whisper-large-v3。LFS oid（发布方凭据），与作者生产机那份逐字节相同。"
+  },
+  {
+   "name": "faster_whisper_large_v3_config_json",
+   "kind": "file",
+   "root": "model",
+   "path": "config.json",
+   "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/config.json",
+   "bytes": 2394,
+   "sha256": "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9",
+   "grade": "A",
+   "license": "MIT（模型）/ OpenAI Whisper 上游 MIT",
+   "note": "repo id = Systran/faster-whisper-large-v3。非 LFS，仓库里没有 oid；这份 sha256 是直接从 huggingface.co 取的线上件算的，与作者生产机那份逐字节相同。"
+  },
+  {
+   "name": "faster_whisper_large_v3_preprocessor_config_json",
+   "kind": "file",
+   "root": "model",
+   "path": "preprocessor_config.json",
+   "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/preprocessor_config.json",
+   "bytes": 340,
+   "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+   "grade": "A",
+   "license": "MIT（模型）/ OpenAI Whisper 上游 MIT",
+   "note": "repo id = Systran/faster-whisper-large-v3。同上。"
+  },
+  {
+   "name": "faster_whisper_large_v3_tokenizer_json",
+   "kind": "file",
+   "root": "model",
+   "path": "tokenizer.json",
+   "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/tokenizer.json",
+   "bytes": 2480617,
+   "sha256": "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+   "grade": "A",
+   "license": "MIT（模型）/ OpenAI Whisper 上游 MIT",
+   "note": "repo id = Systran/faster-whisper-large-v3。同上。"
+  },
+  {
+   "name": "faster_whisper_large_v3_vocabulary_json",
+   "kind": "file",
+   "root": "model",
+   "path": "vocabulary.json",
+   "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/main/vocabulary.json",
+   "bytes": 1068114,
+   "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+   "grade": "A",
+   "license": "MIT（模型）/ OpenAI Whisper 上游 MIT",
+   "note": "repo id = Systran/faster-whisper-large-v3。同上。"
+  },
+  {
+   "name": "nvidia_cudnn9_and_cublas12",
+   "kind": "manual",
+   "root": "system",
+   "grade": "C",
+   "license": "NVIDIA cuDNN SLA + CUDA Toolkit 许可（要登录接受条款才能下载）",
+   "url": "https://developer.nvidia.com/rdp/cudnn-download",
+   "note": "ctranslate2 4.x 的 CUDA 后端要 cuDNN 9 + cuBLAS 12，而且必须是进程能搜到的位置。作者机上这两个是装在 Windows 系统目录（System32） 里的（随 NVIDIA CUDA Toolkit / cuDNN 安装包进去），cublas64_12.dll = 113,716,224 B / 9513540e4ec4c51ee9e7304138c2cc255c29a8c181f9e80c38efa25738becd99，cudnn_ops64_9.dll = 116,958,752 B / 080c2bb37e9d1fdd585cdd53fdbb23c0478b99610a19f8bba512b596b1e302fe，整套 8 个 cudnn*9.dll 都在。注意这几个和 CrispASR release 附带的那三件 cuda12 dll不是同一版（cublas64_12.dll 字节数就差 3,584 B），别混用。\nNVIDIA 的 cuDNN 下载要登录，没有匿名直链，所以这一条只能人工：要么装官方包，要么 pip 装 nvidia-cudnn-cu12 / nvidia-cublas-cu12 再把它们 site-packages\\nvidia\\*\\bin 加进 PATH。--check 对这一条只给 WARN；纯 CPU 机器请改用 cpu 分支，不要靠这件。"
+  }
+ ]
+}
