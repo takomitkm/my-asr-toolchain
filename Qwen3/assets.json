@@ -1,0 +1,127 @@
+{
+  "engine": "Qwen3",
+  "driver": "crispasr-Qwen-cpu.py",
+  "branch": "cpu",
+  "note": "无显卡 CPU 机器的 Qwen3-ASR 批转链。清单里每条的 sha256 都是作者生产机上那份实测出来的，且除 manual 项外都与发布方给的哈希一致（GitHub release digest / HuggingFace LFS oid），所以照链接下载 = 拿到同一个文件。",
+  "roots": {
+    "bin": {
+      "default": "crispasr",
+      "env": "CRISPASR_BIN_DIR",
+      "label": "crispasr 程序目录（驱动 CONFIG 里的 CRISPASR_BIN_DIR）"
+    },
+    "model": {
+      "default": "model",
+      "env": "CRISPASR_MODEL_DIR",
+      "label": "模型目录（驱动 CONFIG 里的 MODEL_DIR）"
+    }
+  },
+  "items": [
+    {
+      "name": "crispasr_cpu_build",
+      "kind": "zip",
+      "root": "bin",
+      "path": "crispasr-windows-x86_64-cpu.zip",
+      "url": "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.37/crispasr-windows-x86_64-cpu.zip",
+      "bytes": 8705179,
+      "sha256": "630ffec138e4247bd05b91ddab8df3a82b15d9ba72a26212006be52e7db73f0b",
+      "zip_prefix": "crispasr-windows-x86_64-cpu/",
+      "grade": "A",
+      "license": "MIT（CrispASR）",
+      "members": [
+        {
+          "path": "crispasr.exe",
+          "bytes": 18387456,
+          "sha256": "b8f53a343ca9517d6d4060db220d3d8ee2c7e128d67f89dcd556cacdd090a71d"
+        },
+        {
+          "path": "openblas.dll",
+          "bytes": 1781760,
+          "sha256": "0b9d921663bb57b3ac79bbf38fa0de3abcf115d6755cb723739fcd474a5fc3fd"
+        },
+        {
+          "path": "crispasr-quantize.exe",
+          "bytes": 593408,
+          "sha256": "1195a7e791984abd09d6ef53fee623a520e8f9e99ce3902415353f34fd59da0d"
+        },
+        {
+          "path": "LICENSE",
+          "bytes": 1099,
+          "sha256": "bcd8ec749126d45cb06737d0690295d73df4b6e7e194205bcf91190368f27285"
+        },
+        {
+          "path": "THIRD_PARTY_NOTICES.txt",
+          "bytes": 33137,
+          "sha256": "e2e6c80df7db63f1279d31d2fe17d5c703a8b10c247d1cf49623e68a254074f6"
+        }
+      ],
+      "note": "纯 CPU 包里不带 ggml-*.dll（静态链进 exe 了），但 crispasr.exe 必须和 openblas.dll 同目录。\nzip 自身的 sha256 是 GitHub release 给的 digest；5 个成员的 sha256 是从这个 zip 里逐成员算出来的，\n并且与作者那台纯 CPU 机器上 crispasr-windows-x86_64-cpu 目录里的那两份实测逐字节相同。\n解完默认删 zip，--keep-zip 留着。"
+    },
+    {
+      "name": "msvc_runtime_dlls",
+      "kind": "manual",
+      "root": "bin",
+      "grade": "C",
+      "url": "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+      "note_short": "crispasr.exe 动态链 MSVC C++ 运行库：要么装系统级 vc_redist.x64.exe，要么把这 4 个 dll 拷到 crispasr.exe 同目录（Windows 先搜 exe 所在目录，不用动 PATH）",
+      "note": "作者那台无显卡 CPU 服务器上没有 VC 运行库，所以是把 4 个 dll 直接拷进程序目录跑的（校机实测，下面 4 件就是当时那 4 份的哈希与字节数）。\nvc_redist 是微软的安装包，版本会变，所以这里不钉 sha256：装了它之后 System32 里的那 4 份即可用。\n这一项 kind=manual，fetch_assets.py 只给 WARN、不算失败。",
+      "members": [
+        {
+          "path": "msvcp140.dll",
+          "bytes": 553552,
+          "sha256": "def46aa6a8f72f27bafac0c43334419486a4d1dcdb6c479a8ef7034b3e1fa4cb"
+        },
+        {
+          "path": "vcomp140.dll",
+          "bytes": 213064,
+          "sha256": "31af29c03643f8396a6f26bcd601c6369d26493d7d78b714827ab2801bd284c7"
+        },
+        {
+          "path": "vcruntime140.dll",
+          "bytes": 123472,
+          "sha256": "184146852727a9db4eea06178716bec3cdbb1015c911f6b0f915b184ad7775b2"
+        },
+        {
+          "path": "vcruntime140_1.dll",
+          "bytes": 47264,
+          "sha256": "e6bfb3662ab4b1969a73441dbe35c96d51441b6bff8cf1fe7430bd5b246ca605"
+        }
+      ]
+    },
+    {
+      "name": "qwen3_asr_1.7b_q4_k",
+      "kind": "file",
+      "root": "model",
+      "path": "qwen3-asr-1.7b-q4_k.gguf",
+      "url": "https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF/resolve/main/qwen3-asr-1.7b-q4_k.gguf",
+      "bytes": 1490915200,
+      "sha256": "ec197cef7ccc589fdcae1becc3f4a3de119d0a41e790b898b519b1a048dad8d4",
+      "grade": "A",
+      "license": "Apache-2.0（上游 Qwen/Qwen3-ASR-1.7B）",
+      "note": "驱动 103 行写死这个文件名。同一个仓里还有 q8_0（2506723200 B / 9851ab996591a2d0cb0efb216002764b509c86bd40c95e613d7b65b8e69c8a6e）与 f16/q5_k 各档；\n作者在生产机上量过：同一份 90 s、同 -t 12，q8_0 84.3 s 对 q4_k 67.6 s（慢 24.7%），而且两份文本不逐字相同，所以 CPU 机器用 q4_k。\n这件就是 CrispASR 自己 -m auto 注册表里 qwen3-1.7b 那一行（src/crispasr_model_registry.cpp:182-184），不是另找的路子。"
+    },
+    {
+      "name": "silero_vad_v6_2_0",
+      "kind": "file",
+      "root": "model",
+      "path": "ggml-silero-v6.2.0.bin",
+      "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+      "bytes": 885098,
+      "sha256": "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
+      "grade": "A",
+      "license": "BSD-3（Silero）",
+      "note": "驱动 133 行。这是 crispasr 自己的默认（examples/cli/crispasr_vad_cli.cpp:19-20 的 URL 与文件名就是这一份），models/download-vad-model.sh 也从这个仓取。\n同仓的 v5.1.2：885098 B / 29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf —— 两份同字节数但不同内容，换版本要同时改 path 和 sha256。\n已知洞：v6.2.0 对唱歌素材判 0 段，rc 仍是 0、不落 .txt，整条会被静默丢弃。驱动靠 86 行的 NO_SPEECH_LOG 记账，别让判无语音的文件无声消失。"
+    },
+    {
+      "name": "whisper_tiny_lid",
+      "kind": "file",
+      "root": "model",
+      "path": "ggml-tiny.bin",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+      "bytes": 77691713,
+      "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+      "grade": "A",
+      "license": "MIT（whisper.cpp）",
+      "note": "驱动 110 行，配 330/338 行的 CRISPASR_LANGUAGE=\"auto\" + CRISPASR_LID_BACKEND=\"whisper\"：whisper-tiny 当语种前置判别器，只听开头、不出字。\n必须给成本地存在的这件，否则 crispasr 会去联网下（models/download-ggml-model.sh:9 的 src 就是这个仓），离线机器上卡满超时。\n语种写成具体值（比如 \"zh\"）时这件不参与拼命令，可以不下。"
+    }
+  ]
+}

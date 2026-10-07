@@ -1,0 +1,28 @@
+# 转写运行时（跑 xhs-chain-cpu.py 只需要这一个文件）
+#
+# 这套 pins 里 7 件是 2026-10-06 产线上实测在跑的（CPython 3.12.15），逐字对拍在这套上过的。
+# 干净机复现那轮（README 12.2）用的是 CPython 3.13.11，同一套 pins 全部装上并跑通，
+# 所以 3.12 / 3.13 都行；更早的版本这条链上没验过。
+#
+# 关于 onnxruntime 的版本，两条互相独立的事实，别混：
+#   1) 1.20.1 的 contrib 只实现了 4-bit MatMulNBits，所以公开的 punc.q8w.onnx
+#      在 1.20.1 上加载会报 "Only 4b quantization is supported"。本包的解法不是升 ORT，
+#      而是 fetch_assets.py 用 dequant_punc.py 把它逆量化成纯 f32（普通 MatMul）。
+#   2) ORT>=1.21 在部分 Windows 机器上 import 就崩（0xC0000142 / "DLL 初始化例程失败"），
+#      根因是 System32 的 VC 运行库太旧、缺 vcruntime140_threads.dll，与 ORT 本身无关。
+#      1.20.1 是唯一"只装包就能起"的版本，所以这里钉它。
+# 装 1.20.1 就别指望跑 crispasr / torch 导出，那两条要单独的 torch 环境。
+
+numpy==2.5.3
+onnxruntime==1.20.1
+soundfile==0.14.0
+scipy==1.18.1
+tokenizers==0.23.2
+kaldi-native-fbank==1.22.3
+kaldiio==2.18.1
+
+# 只有 --on-done trash（转写成功后把源文件丢回收站）才用到；
+# 缺了不会崩，会退回"源文件保留不删"并写一行 error 日志。
+# 2.1.0 = 2026-10-06 干净机那轮 pip 实际解析到的版本（产线机器上那份是手工拷进
+# site-packages 的、没有 dist-info，所以产线侧核不到确切版本）。
+Send2Trash==2.1.0

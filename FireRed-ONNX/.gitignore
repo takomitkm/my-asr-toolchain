@@ -1,0 +1,22 @@
+# 环境、缓存和 fetch_assets.py 下载/建造出来的大文件都不进库。
+# 随包的 models/fireredvad-onnx/ 下那两个文本件是例外（它们是源码，见 README 第 2 节）。
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 驱动的默认数据根（<data-root> 指到包外就别想出现，防手滑）
+/data/
+
+# 资源默认落点：models/ 整棵树不进库，只放回上游那两份文本
+models/*
+!models/fireredvad-onnx/
+models/fireredvad-onnx/*
+!models/fireredvad-onnx/infer_onnx.py
+!models/fireredvad-onnx/README.md
+
+# 运行产物
+*.log
+.lock
+STOP

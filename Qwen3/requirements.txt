@@ -1,0 +1,13 @@
+# 跑 crispasr-Qwen-cpu.py 只需要这一件第三方库，其余全是标准库。
+#
+# 驱动本身只用 ctypes/logging/os/re/signal/subprocess/sys/tempfile/threading/time/
+# urllib.request/contextlib/datetime/pathlib；ntfy 推送走 urllib，不引第三方 HTTP 客户端。
+#
+# send2trash 是必需件：驱动第 56 行是模块级 import，装不上就直接 ImportError 起不来
+# （不会退化成"源文件保留不删"——那是 FireRed-ONNX/ 那份驱动的做法，这份没有）。
+# 它是纯 Python，作者生产机上是从别处的 site-packages 直接拷进免安装 Python 里用的。
+#
+# 解释器版本：驱动没用到 3.9+ 的语法（无 match、无内置泛型标注、无海象）。
+# 2.1.0 = 2026-10-06 那轮 pip 实际解析到的版本（PyPI 上有这个轮子）；作者生产机上那份是
+# 手工拷进 site-packages 的、没有 dist-info，所以产线侧的具体版本核不到，只能确认能用。
+Send2Trash==2.1.0

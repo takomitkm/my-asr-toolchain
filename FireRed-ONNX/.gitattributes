@@ -1,0 +1,9 @@
+# 一律禁止 git 转换换行：仓库里存什么字节，克隆出来就是什么字节。
+# 理由是本包 README 第 2 节那张 sha256 表要能在别人机器上逐字节复算——
+# 一旦 git 按 core.autocrlf 改了 .py 的换行，那些哈希就全对不上了。
+#
+# 现状（作者侧就是这样的，别指望 git 帮你修）：
+#   setup.bat                      CRLF（Windows 批处理必须）
+#   optional-lid/lid_onnx.py       CRLF（从产线树带出来的）
+#   其余 .py / .md / .txt / 这两件   LF
+* -text
