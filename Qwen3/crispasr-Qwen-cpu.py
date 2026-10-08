@@ -144,7 +144,7 @@ CRISPASR_LID_MODEL = os.path.join(MODEL_DIR, "ggml-tiny.bin")
 # (光 p/b.3537109134608937 就 30+ 条)。
 # 换成 firered 的选项【已排除,这份不改】:代价 +31% 墙钟,而且本包复原出来的 model\ 里
 # 【没有】firered-vad.gguf(2,357,952 B),要换得先自己拷进 MODEL_DIR;
-# xhs-asr.py(GPU 那台)用 firered,完整说明在那份的 CONFIG · VAD。
+# crisper-xhs-qwen-asr.py(GPU 那台)用 firered,完整说明在那份的 CONFIG · VAD。
 # 顺带:-vt 救不了 silero v6(0.50/0.25/0.02 三档全是 0 段),而且这个参数在 crispasr 的
 # silero 路径上语义可疑(口语素材 -vt 0.95 反而从 7 段变 13 段),别拿它调。
 # 要看 firered 的逐帧概率就加 --firered-vad-debug(它默认不吐段表)。
