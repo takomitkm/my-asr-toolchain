@@ -186,7 +186,11 @@ if CRISPASR_THREADS <= 0:
 # 机制:AED 的解码器恒定在 CPU(src/firered_asr.cpp:442 原话 "Decoder weights ALWAYS go
 # to CPU"),但【编码器】是 split-load 上显卡的(:453-465,enc_gpu 为真时只把 enc.* 送
 # GPU)。所以拔掉显卡对 AED 是双重打击:编码器那 1.1B 参数的 Conformer 掉回 CPU,而它本来
-# 就慢的解码器(没有 KV cache,每步重算整段注意力,成本随已出 token 数平方增长)一点没变快。
+# 就慢的解码器(每出一个 token 都要在 CPU 上过一遍整份解码器权重)一点没变快。
+# 更正一处旧说法:上游 PERFORMANCE.md:337 把 AED 解码器写成"没有 KV cache、每步 O(T²) 重算",
+# 这条与出货代码不符 —— 每层每个 beam 都带一份 sa_k/sa_v 增量缓存,读码依据在 gpu 分支
+# CrispASR-FireRed/README.md §5.1 ①。所以 AED 慢不能拿"没做 KV"来解释,能确定的是解码整趟
+# 都在 CPU 上跑;具体卡在矩阵乘还是每步的 dispatch 没有拆开。
 # 上游那张 CPU-only 表(PERFORMANCE.md:693-707,4 线程 AVX2 / 7.6 GB)量到的就是这件事:
 #     FireRed ASR2 AED   0.1x(CPU,123 s) → 0.6x(T4)   —— 掉显卡差 6.5x,全表最惨
 #     Qwen3 ASR 0.6B     1.7x(CPU, 6.5 s) → 4.7x(T4)   —— 掉显卡差 2.8x
@@ -235,7 +239,9 @@ if CRISPASR_THREADS <= 0:
 #
 # 内存这笔账别拿来推断速度:q4_k 权重 1.49 GB + KV 约 0.22 GB(28 层 × head_dim 128 ×
 # n_kv 8 × ctx 4096,F16)每实例约 1.7-2 GB,125 GB 内存随便开多实例。占用大 ≠ 慢 ——
-# qwen3 存下 KV 正是它每 token 只算一步的原因,AED 不留 KV 才每步重算整段注意力。
+# qwen3 存下 28 层的 K/V 所以每 token 只算一步;AED 也存(16 层、每片解码上限 150 token),
+# "AED 不留 KV、每步重算整段"是上游文档的口误,读码依据见 gpu 分支 CrispASR-FireRed/README.md
+# §5.1 ①。两边占用差的是层的规模,不是有没有缓存。
 # 反证一条(2026-10-02 实测):同一份 90 s、同样 -t 12,换 q8_0 要 84.3 s 而 q4_k 是
 # 67.6 s —— 内存用得多 25%,反而慢 24.7%,而且输出并不逐字相同(q4 546 字 / q8 544 字)。
 # 所以"内存大就随便用"在这个负载上换不来速度:瓶颈是把权重每个 token 搬一遍的带宽,
