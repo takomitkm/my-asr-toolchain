@@ -141,7 +141,7 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
 
 ### 5.1 与 CrispASR 自带文档不符的三处（读 v0.8.37 源码核出来的）
 
-两条都是**代码级**断言，复算方法：clone 上游后 `git checkout d08ec2d`（= 0.8.37，发布件
+三条都是**代码级**断言，复算方法：clone 上游后 `git checkout d08ec2d`（= 0.8.37，发布件
 `crispasr.exe --version` 打的 git sha 就是它），照下面给的 `文件:行` 逐行读。等级 **A**
 （本包内可复算的读码结论，不依赖任何一台机器）。
 
@@ -158,9 +158,21 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
   四个张量字段（`src/firered_asr.cpp:254-259`），但**全文件除声明外没有任何使用点**，是死字段。
   "结构体里有 KV cache 字段却没接上"看起来正好是 P0 那条说法的样子，实际在用的缓存是上面
   那两份 per-beam vector。
-* 对本包的意义：**别**用"CrispASR 没治 KV cache，所以 `cpu` 分支那条纯 ONNX 链快 5 倍是治了这个"
-  来解释速度差——两侧都是增量 K/V，这条解释已经作废（那半边也有公开更正记录）。速度差要归到
-  计算图与执行器上（f32 编码器 + int8 解码器的 mixed 档，见 `cpu` 分支 `FireRed-ONNX/README.md` §4.3）。
+* 上游自己已经推翻过这条，而且就在同一份发布件里：`HISTORY.md:3449-3458`（2026-07-12 那节标题
+  直接写着 "profiling debunked the handover"）用 `FIRERED_BENCH` 逐节点量下来是——self-attn 的
+  K/V **已经缓存**（`beam.sa_k/sa_v` 每步只 append 当前 token）、单步耗时**与历史长度无关**，
+  所以解码是 **dispatch-bound** 而不是注意力复杂度问题，真实开销是每步 90 多个小 matvec
+  （8 个投影 × 16 层）。他们的修法是常驻图缓存 `CRISPASR_FIRERED_MATVEC_CACHE`
+  （`src/firered_asr.cpp:385-391`，**默认开**，关掉走原来的每次建图路径，转写逐字节相同）。
+  也就是说 0.8.37 到手时那条 P0 早已不成立，`PERFORMANCE.md` 那张表只是没跟着改。
+* 对本包的意义：**别**用"CrispASR 没治 KV cache，所以 `cpu` 分支那条纯 ONNX 链更快是治了这个"
+  来解释速度差——两侧都是增量 K/V，这条解释已经作废（那半边也有公开更正记录）。10-08 同机同件
+  （80.2 s 素材、两边都 12 线程、都是 VAD + AED + 标点的整链）实测：ONNX 单件 23.85 s（RTF 0.297，
+  另加 6.4 s 一次性装载），crispasr 贪心档 wall 31.9 s（自报 0.357）、默认 beam=3 wall 43.9 s
+  （自报 0.501）；但同日更早那轮"单件对单件、两边各含一次装载"是 29.2 s 对 29.4 s，**打平**。
+  也就是说差距来自**批次摊薄**（crispasr 每个文件重装一次模型、多个 `-f` 又省不下来），
+  过去那个跨机器拼出来的"5 倍"从来不存在。剩下的差要归到计算图与执行器上（f32 编码器 + int8
+  解码器的 mixed 档，见 `cpu` 分支 `FireRed-ONNX/README.md` §4.3）。
 
 **② session API 没法把 FireRed 的解码固定在贪心：`beam_size = 1` 被当成"不设"。**
 

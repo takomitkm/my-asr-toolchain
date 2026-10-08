@@ -299,11 +299,16 @@ CRISPASR_GPU_BACKEND = "cuda"
 # 直接乘爆,所以显存里放着权重反而更慢。源码注释没把这笔账写全,以上是按结构推的,
 # 想证实只能自己测),只有 enc.* 张量 split-load 到显卡(firered_asr.cpp:447-451 注释、
 # :453-465 代码 load_weights_split,官方在 Metal 2.3x / Vulkan-MoltenVK 2.1x / CUDA P100
-# 2.2x 上验过转写逐字一致)。所以显存里有货、卡却整天空闲:每个 30 秒片段
-# 编码器闪一下零点几秒,接着 CPU 解码几十秒,1 秒粒度采样就归零了。上游 PERFORMANCE.md:653
+# 2.2x 上验过转写逐字一致)。所以显存里有货、卡却整天空闲:每个切片(出厂上限 20 s,见下面
+# CONFIG)编码器闪一下零点几秒,接着 CPU 解码几十秒,1 秒粒度采样就归零了。上游 PERFORMANCE.md:653
 # 自己列的数字是 AED RTx 0.6x(全表最慢),第 712 行原话"FireRed decoder still runs on
-# CPU even with GPU"。另外解码器自注意力【没有 KV cache】(PERFORMANCE.md:337 列为 P0),
-# 单步成本随已出 token 数平方增长,长片段是二次方变慢。
+# CPU even with GPU" —— 这句是对的。但同一份文档 337 行把解码器自注意力列为 P0、说它"没有
+# KV cache、O(T²) 重算",这条与出货代码不符:每层每个 beam 都带一份 sa_k/sa_v 增量缓存
+# (firered_asr.cpp:2247-2258 预留容量、:2340-2343 贪心路与 :2563-2568 beam 路每步只 append
+# 当前这一步的 K/V);解码器还留了个逐 token 计时开关 CRISPASR_FIRERED_BENCH=1,打的是
+# "decode step N/150 (ms elapsed)",想复核到底是"每步重算整段"还是"每步只加一个 token",
+# 跑一条长音频看这一列随 N 怎么走就行。按代码读出来的结论是后者:单步成本≈已出 token 数
+# (线性),整句的 attention 打分本身才是 O(T²) 那一项 —— 逐行依据见 README.md §5.1 ①。
 #
 # 对比:qwen3 是【反过来】的实现 —— 真 KV cache(src/qwen3_asr.cpp:249-261 字段、
 # :2023-2102 qwen3_asr_kv_init,默认 F16,按 28 层 × head_dim 128 × n_kv 8 × max_ctx
@@ -373,13 +378,20 @@ CRISPASR_GPU_BACKEND = "cuda"
 # —— 所以核数够多的纯 CPU 服务器,完全可能比 T4 上的 AED 快。
 #
 # 纯 CPU 机器该怎么配(不是"照搬本地这套"):
-#   ENGINE_PRIMARY = "qwen3"、ENGINE_FALLBACK = "aed" 或直接只留 qwen3。理由是 AED 的
-#   力气全在 CPU 上做 O(T²) 的解码器自注意力(解码器【没有 KV cache】,PERFORMANCE.md:337
-#   列为 P0 待办),显卡拔掉它只是丢掉编码器那点加速;而 qwen3 有真 KV cache,每出一个
-#   新 token 只算一步,所以上面那组 CPU 数值里 qwen3 快。
+#   ENGINE_PRIMARY = "qwen3"、ENGINE_FALLBACK = "aed" 或直接只留 qwen3。依据是实测数值,不是
+#   机制故事:这台笔记本纯 CPU 上 AED 比 qwen3 慢 1.6-1.9 倍(上面那组,n=1、C 级);10-08 在
+#   24 vCPU 的机器上同机复测,差距缩到同一量级 —— AED 贪心整链 wall RTF 0.398(80.2 s 素材),
+#   qwen3 整链 0.321(63.7 s 素材),素材不同,只能看量级不能当倍数。
+#   机制那一侧要更正一句:PERFORMANCE.md:337 说 AED 解码器"没有 KV cache",这条与出货代码
+#   不符(见 README.md §5.1 ①),所以"因为 AED 没做 KV、每步重算整段注意力才慢"这个解释已经
+#   作废。两边都是增量 K/V;能确定的是 AED 的解码器权重恒定在 CPU(firered_asr.cpp:442),
+#   每出一个 token 都要在 CPU 上过一遍 matvec。这件事上游自己逐节点量过:每步 90 多个小
+#   matvec(8 个投影 × 16 层),卡的是 dispatch 而不是注意力复杂度,并为此加了默认开的常驻
+#   图缓存开关 CRISPASR_FIRERED_MATVEC_CACHE(HISTORY.md:3449-3458、firered_asr.cpp:385-391)。
+#   读码就能复算,不需要跑 GPU;三条依据的逐行出处在本目录 README.md §5.1 ①。
 #   "qwen3 吃的显存比 AED 多近 3 倍,所以搬到 CPU 上一定更慢"是倒因为果:占用与速度是
-#   两回事。它占得多恰恰是因为它把历史 K/V 全存下来复用(AED 不留 KV、每步重算整段
-#   注意力),用空间换掉了每步的计算量。搬到纯 CPU 机器上这笔账变成内存:
+#   两回事。它占得多是因为 LLM 那 28 层的 K/V 全存下来复用;AED 同样存 K/V,只是 16 层 ×
+#   每片上限 150 token,规模小一个量级。搬到纯 CPU 机器上这笔账变成内存:
 #   q8_0 权重 2.51 GB + KV 约 0.22 GB,比 AED 的 0.96 GB 多约 1.8 GB —— 服务器内存
 #   通常不是瓶颈,别用它来反推速度。
 #
@@ -586,8 +598,9 @@ VAD_MAX_SPEECH_SEC = ""     # -vmsd:超过这个长度的语音段自动再切(�
 # 两条引擎都靠它兜边界,但原因不同:
 #   aed    必须给。FireRedASR2-AED 的编码器是相对位置编码 pe_maxlen=5000(≈200 s)
 #          + O(T²) 自注意力,issue #125 实测 >50 s 单趟在 CUDA 上直接挂死
-#          (crispasr_backend_firered_asr.cpp:22-36)。VAD 段超过 30 s 时由
-#          crispasr_rechunk_slices() 在能量极小点处切开。
+#          (crispasr_backend_firered_asr.cpp:22-36)。VAD 段超过 --chunk-seconds(出厂 20 s)时由
+#          crispasr_rechunk_slices() 在能量极小点处切开。真正决定这个值能不能放大的是下面
+#          VAD_MAX_SEGMENT_SEC 那条:每个切片的解码预算硬顶 150 token。
 #   qwen3  同样要给:LLM 解码器的 KV cache 随音频时长线性增长,不分块会顶显存。
 # 设 0 = 不分块(整文件一趟),AED 这条路【不要】这么设。
 #
