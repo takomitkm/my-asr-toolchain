@@ -128,6 +128,34 @@ CUDA 侧的行为差异只在 `CRISPASR_GPU_BACKEND` 这一个开关和 `ggml-cu
 实测过的数（GPU，4060）：单文件 40 s 量级的中文素材 **RTF ≈ 0.08**。多实例只 +33%，
 批量 `-f` 之外再堆并行没有意义。
 
+### 4.1 `--chunk-seconds 30`：Qwen 这条路没有 AED 那个丢字的坑
+
+`../CrispASR-FireRed/` 那条 10-08 实测出"每个切片解码上限硬顶 150 token、`-n` 管不到、
+撞顶静默丢尾"，那边的 `VAD_MAX_SEGMENT_SEC` 已改成 20（详见 `../CrispASR-FireRed/README.md` §5.1 ③）。
+本包和 `cpu` 分支 `Qwen3/` 的 30 **不动**，理由分三层：
+
+- **① 预算不是硬顶**（A，读 v0.8.37 源码）。`examples/cli/crispasr_backend_qwen3.cpp:253`
+  写的是 `const int max_new = params.max_new_tokens > 0 ? params.max_new_tokens : 512;`，
+  那个默认值本身在 `src/core/greedy_decode.h:71` 和 `src/core/beam_decode.h:112`
+  （两处都是 `int max_new_tokens = 512; // hard cap on generated tokens`）。
+  与 AED 的关键差别只有两点：**512 不随切片长度收紧**（AED 是 `min(T_sub, 150)`，切片越长顶越死），
+  **而且 `-n/--max-new-tokens` 改得动**（AED 那条 CLI 上无路可走）。
+  KV cache 按 `max(4096, prompt_len + max_new + 16)` 现场分配（`:254`），不存在"预算装不下"；
+  不分块的代价是显存与时间随音频线性增长，不是丢字。
+- **② 30 s 离顶还有两三倍**（B，外推，不是直测）。解码循环 `while (size < max_new_tokens &&
+  最后一个 != eos)`，正常切片停在 EOS（`:262-267` 取 `<||im_end|>` 的 id）而不是停在 512。
+  同权重同素材的本机数字是连续中文旁白约 5.5 token/s、每 30 s 用量 100-135 token
+  （AED 自己日志报的，是 AED 词表的密度），Qwen3 的词表对中文更碎（只会比这个数大不会小），
+  保守按 2 倍算，30 s ≈ 200-270 token，占 512 的 39%-53%。
+  **顶真正会咬人的地方是长音频整趟解码**：VAD 漏切的长段、或 `--chunk-seconds` 调到 0（不分块），
+  约 **75-90 s 连续语音**才够到 512。
+- **③ 截断同样是静默的**（A）：`crispasr_backend_qwen3.cpp:807-818` 那个 `for (step < max_new)`
+  的流式循环走到 `step + 1 == max_new` 就 `break`，全程没有一行"我撞预算了"的输出。
+  所以真要动这条链的分块，**别指望日志告警**，只能自己数 token 或比对字数。
+- 复算路径：上游 clone 后 `git checkout d08ec2d`（= 0.8.37），逐行看上面给的 `文件:行`。
+  本机没有 qwen3 权重，②这一档没做直测；要把 ② 从 B 提到 A，就找一段 >90 s 不被 VAD
+  切断的连续语音，同一条素材在 `-n 512` 和 `-n 1024` 下各跑一遍比字数 —— 字数变了就是顶到了。
+
 ## 5. 已知洞与边界
 
 - **"CrispASR 把内置 LID 吃了"**：qwen3-ASR 模型自带语种判别，但 CrispASR 的 CUDA 构建

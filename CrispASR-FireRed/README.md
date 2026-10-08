@@ -137,9 +137,9 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
   （rc 仍为 0、不落 `.txt`）。同一条 60 s 日推歌曲副歌：`firered-vad` 出 97 字真歌词、
   silero-v5 捡回 59 字、silero-v6 出 0 段。**代价是多花约 31% 墙钟**。
   FireRedVAD 的 voice 类是"语音 ∪ 唱歌"，所以它不会把唱歌整段丢掉。
-- **CrispASR 自带文档与实现不符的两处**见下面 5.1，读源码就能复算，不需要跑 GPU。
+- **CrispASR 自带文档与实现不符的三处**见下面 5.1，读源码就能复算，不需要跑 GPU。
 
-### 5.1 与 CrispASR 自带文档不符的两处（读 v0.8.37 源码核出来的）
+### 5.1 与 CrispASR 自带文档不符的三处（读 v0.8.37 源码核出来的）
 
 两条都是**代码级**断言，复算方法：clone 上游后 `git checkout d08ec2d`（= 0.8.37，发布件
 `crispasr.exe --version` 打的 git sha 就是它），照下面给的 `文件:行` 逐行读。等级 **A**
@@ -176,11 +176,38 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
   `src/firered_asr.cpp:2311` 的 `beam_size == 1` 分支。（一处自我更正：早期我把这条写成
   "CLI 永远跑 beam 3、`-bs 1` 走不到贪心"，**CLI 那半句是错的**，走不通的是 session API 那条。）
 * 本包这份驱动走的是 CLI（`crispasr.exe` 子进程），命令里**没有** `-bs`，所以取 CLI 的默认档。
-  那个默认取 `whisper_full_default_params(CRISPASR_SAMPLING_BEAM_SEARCH).beam_search.beam_size`，
-  定义在依赖里、不在本仓，**本包没有核到它落到 3 还是 5**（`examples/cli/cli.cpp:69`、
-  `examples/cli/crispasr_backend_firered_asr.cpp:41-47`）。要固定在贪心就自己显式加 `-bs 1`；
+  10-08 校机实测已核到：**不给 `-bs` 时日志逐条是 `firered_asr: decoder starting (max_len=150, beam=3, layers=16)`
+  ⇒ 默认档就是 3**；给 `-bs 1` 才变 `beam=1`。`--help` 里那行 `-bs N [greedy]` 与运行时不一致，以运行时为准。
   要知道自己拿到的是哪一档，就对着日志里 `firered_asr: decoder starting (max_len=…, beam=…, …)`
   那一行看（`src/firered_asr.cpp:2269-2271`，verbosity ≥ 1 就打 = 默认会打，加了 `-q` / 静默档就不打）。
+  速度代价也实测了：beam=3 比 `-bs 1` 慢 35%（12 线程）～49%（18 线程），加线程救不回来；
+  "beam=3 更准"这一条**没有实测**，只是先验，动它之前自己复验。
+
+**③ 每个切片的解码上限是硬顶 150 token，没有任何 CLI 参数能改 —— 所以 `--chunk-seconds` 不是速度参数。**
+
+* `src/firered_asr.cpp:2075`：`int max_len = is_lid ? 2 : std::min(T_sub, 150);` —— 150 写死在源码里。
+  `-n/--max-new-tokens`（默认 512）是 LLM 后端的路径（`src/core/greedy_decode.h:71`、
+  `src/core/beam_decode.h:112`、`examples/cli/crispasr_backend_qwen3.cpp:253`），firered 适配器全文
+  不读它，所以对 AED 无效。
+* 该文件 `:2072-2073` 的注释按"3-4 BPE token/s"估算，认为 150 够用。**中文连续旁白实测到
+  5.4-5.5 token/s**，150 token ≈ 27 s，所以 30 s 的切片会顶到 150 并静默丢尾。10-08 同机同链
+  只差这一个参数、跑两条素材（逐片 token 数取自 crispasr 自己的日志）：
+  s1.wav 80.2 s —— `30` 切 3 片 token 150/150/118（两片撞顶），去标点 445 字；`20` 切 5 片
+  token 109/100/109/108/10（零撞顶），去标点 **463 字，+18 字 / +4.0%**（原文 1367→1423 B）。
+  s2.wav 344.9 s —— `30` 切 12 片 token 150/150/115/146/130/145/150/150/150/150/150/141
+  （**12 片里 7 片撞顶**），去标点 1771 字；`20` 切 19 片最长 135，去标点 **1850 字，+79 字 / +4.5%**
+  （原文 5542→5818 B）。丢的都是整句尾巴：s1 缺"遍地""定独自持枪突入在所有民众的镜头中""毙"，
+  s2 找回来三个完整句子。撞顶时 rc 仍为 0、日志只打 token 数、不报截断。
+  同轮 `20` 档重复跑一遍逐字复现（43.9 / 43.6 s，token 序列与字数相同）。
+  **速度代价接近零**：beam 档 s1 44.0→43.9 s、s2 184.4→181.4 s，贪心档 s1 36.2→31.9 s（−11.9%）。
+* 对照：`--vad-export-raw` 那条文档说 VAD 段是 chunk-length-independent 的，但 crispasr 的 firered VAD
+  实现（`src/firered_vad.cpp:446` 起）只有 `min_speech_sec` / `min_silence_sec`，**没有** 上游 FireRedVAD
+  那个 `max_speech_frame=2000`（= 20 s）的长段强切。也就是说在这份构建里，切片的唯一上限就是
+  `--chunk-seconds`，它必须 ≤ 20 s 才落在 150 token 之下。
+* 本包的处置：`xhs-asr.py` 的 `VAD_MAX_SEGMENT_SEC` 由 30 改成 **20**。
+* 这个坑**只咬 AED**：qwen3 那条解码预算是 `max_new_tokens`（默认 512，`-n` 能改），
+  30 s 档离顶还有 2~3 倍，所以 `CrispASR-Qwen/` 与 `cpu` 分支 `Qwen3/` 的 30 没动 ——
+  推导与复核方法记在 `../CrispASR-Qwen/README.md`。
 
 - **CrispASR 这份构建把 qwen3 模型内置的语种判别吃掉了**（`--list-backends` 没置
   `CAP_LANGUAGE_DETECT`），兜底那趟仍然靠 `-l auto` + whisper 前置判别。
