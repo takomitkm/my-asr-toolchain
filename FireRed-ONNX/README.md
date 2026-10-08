@@ -314,6 +314,16 @@ VAD 环节 1.0 s → 0.9 s，消掉的是那个尖峰（这两个数我没有独
 
 ---
 
+### 4.4 切片上限 20 s 与截断告警：为什么这条链不会有 crispasr 那条的丢字问题
+
+10-08 校机同机对拍时顺手测的（等级 **A**，两条素材、逐段时长由本包 VAD 直接报出）：
+
+- 80.2 s 素材切出 7 段，最长 15.33 s；344.9 s 素材切出 48 段，最长 18.81 s；**超过 20 s 的段 0 个**。
+- 这个 20 s 不是配置项，是写死在 VAD 里的：`models/fireredvad-onnx/infer_onnx.py` 的 `max_speech_frame = 2000` 乘 `frame_shift_ms = 10` = 20 s，`_split_long()` 在 `process()` 里无条件调用（切点取段内概率最小的位置）。
+- 对照另一条链：CrispASR 那份构建的 firered VAD（`src/firered_vad.cpp:446` 起）只有 `min_speech_sec` / `min_silence_sec`，**没有**这个长段强切，所以它的切片上限只能靠 `--chunk-seconds` 给，而 AED 每个切片的解码预算又是写死的 `min(T_sub, 150)` token —— 两边一叠加，`--chunk-seconds 30` 就变成"每片必然顶到 150、尾部整句静默消失"（10-08 实测：30 s 档去标点正文比 20 s 档少 18 字与 79 字，撞顶率 2/3 与 7/12，而 rc 仍为 0、日志不报截断）。推导与复核方法在 `gpu` 分支 `CrispASR-FireRed/README.md` §5.1 ③。
+- 本包的解码侧上限是另一个量级、而且**可观测**：AED 图自带 `max_len = 1024` token，cache 长度按 `int(n_mel_frames / 100.0 * 8.0) + 4` 估（`aed_ort.py` 的 `_pick_cache_len()`），beam 路径写满就按需翻倍、上限才是 1024；一旦循环用尽没等到 EOS 就置 `truncated`，驱动结算时打一行 `有 N 段撞上 cache 上限被截断（文本可能缺尾）`（`xhs-chain-cpu.py`）。上面那 55 段全部没触发。
+
+一句话：这条链把"分块"交给 VAD 硬保证、把"截断"交给日志明说，所以不会出现正文悄悄少一截的情况；换到 crispasr 那条时这两件事都没有，得自己盯 `--chunk-seconds` ≤ 20。
 ## 5. 第 2 步：跑
 
 Windows：

@@ -109,6 +109,15 @@ Python 侧只用到 `Send2Trash`（驱动顶部 `from send2trash import send2tra
 | `CRISPASR_LID_BACKEND` | `"whisper"` | 配 CONFIG 里 `CRISPASR_LID_MODEL` 那个本地 `ggml-tiny.bin` |
 | `BATCH_SIZE` | `28` | 一次 `crispasr.exe` 调用喂多个 `-f`，模型与 VAD 只加载一次（重载 1.7B 权重每次约 6 s） |
 
+### 4.1 `--chunk-seconds 30`：这条链没有 AED 那个丢字的坑（10-08 读码核过）
+
+`gpu` 分支 `CrispASR-FireRed/` 那条 10-08 实测出"FireRed-AED 每个切片的解码上限硬顶 150 token、`-n` 管不到、撞顶静默丢整句"，那边的 `VAD_MAX_SEGMENT_SEC` 已由 30 改成 20（逐片 token 数、推导与复核方法都在 `CrispASR-FireRed/README.md` §5.1 ③）。本包和 `gpu` 分支 `CrispASR-Qwen/` 的 30 **不动**，三条理由：
+
+- **预算不是硬顶，而且改得动**（A，读 v0.8.37 源码）。`examples/cli/crispasr_backend_qwen3.cpp:253` 写的是 `const int max_new = params.max_new_tokens > 0 ? params.max_new_tokens : 512;`，那个默认值本身在 `src/core/greedy_decode.h:71` 和 `src/core/beam_decode.h:112`（两处都是 `int max_new_tokens = 512; // hard cap on generated tokens`）。与 AED 的关键差别只有两点：**512 不随切片长度收紧**（AED 是 `min(T_sub, 150)`，切片越长顶得越死），**而且 `-n/--max-new-tokens` 改得动（AED 那条在 CLI 上没有入口）。KV cache 按 `max(4096, prompt_len + max_new + 16)` 现场分配（`:254`），不存在"预算装不下"；不分块的代价是内存与时间随音频线性增长，不是丢字。
+- **30 s 离顶还有两三倍**（B，外推，不是直测——校机上那份 1.39 GB 的 qwen3 gguf 已随旧测试目录删掉，没有权重就测不了这一档）。正常切片是停在 EOS 而不是停在 512（`crispasr_backend_qwen3.cpp:262-267` 取 `<|im_end|>` 的 id，循环条件 `gen.back() != cfg.eos_id`）。同权重同素材的本机实测是连续中文旁白约 5.5 token/s、每 30 s 用量 100-135 token，Qwen3 的词表对中文更碎（只会比这个数大不会小），保守按 2 倍算，30 s ≈ 200-270 token，占 512 的 39%-53%。**顶真正会咬人的地方是长音频整趟解码**：VAD 漏切的长段、或把 `--chunk-seconds` 设成 0（不分块），大约 **75-90 s 连续语音**才够到 512。
+- **截断同样是静默的**（A）：`crispasr_backend_qwen3.cpp:807-818` 那个 `for (step &lt; max_new)` 的流式循环走到 `step + 1 == max_new` 就直接 `break`，全程没有一行"我撞预算了"的输出。所以真要改这条链的分块，别指望日志告警，只能自己数 token 或比对字数。
+
+复算路径：上游 clone 后 `git checkout d08ec2d`（= 0.8.37，发布件 `crispasr.exe --version` 打的 git sha 就是它），照上面给的 `文件:行` 逐行读。要把第二条从 B 提到 A：找一段 &gt;90 s 不被 VAD 切断的连续语音，同一条素材在 `-n 512` 与 `-n 1024` 下各跑一遍比字数——字数变了就是顶到了。
 ## 5. 已知洞与边界
 
 - **silero v6.2.0 对唱歌素材判 0 段**：rc 仍 0、不落 `.txt`、日志只有 "no speech detected"，
