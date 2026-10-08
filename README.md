@@ -15,7 +15,7 @@
 | `main` | —— | —— | 只有这一页 |
 | `cpu` | `FireRed-ONNX/` | `xhs-chain-cpu.py` | 无显卡机器（纯 onnxruntime，四件全链） |
 | `cpu` | `Qwen3/` | `crispasr-Qwen-cpu.py` | 无显卡机器（CrispASR CPU 构建，单模型出成品） |
-| `gpu` | `CrispASR-FireRed/` | `xhs-asr.py` | 有 CUDA 的机器（FireRedASR2-AED 主力 + qwen3 兜底，双引擎） |
+| `gpu` | `CrispASR-FireRed/` | `crisper-xhs-qwen-asr.py` | 有 CUDA 的机器（FireRedASR2-AED 主力 + qwen3 兜底，双引擎） |
 | `gpu` | `CrispASR-Qwen/` | `crispasr-Qwen.py` | 有 CUDA 的机器（qwen3 单引擎） |
 | `gpu` | `faster_whisper/` | `whisper-batch10.py` | 有 CUDA 的机器（faster-whisper large-v3） |
 
@@ -47,7 +47,7 @@
 
 ## 两个最新的驱动，简要说明
 
-**`gpu` 分支 `CrispASR-FireRed/xhs-asr.py`** —— 生产机现役的那份，双引擎。
+**`gpu` 分支 `CrispASR-FireRed/crisper-xhs-qwen-asr.py`** —— 生产机现役的那份，双引擎。
 它解决的问题是"一个引擎的语种覆盖面不够"：FireRedASR2-AED 的中文信息保留度比 qwen3 稳
 （AED 没有 LLM 解码器，结构上不可能把一段话概括成一句），但它内置的语种判别只覆盖
 中文（+约 20 种汉语方言）/ 英语 / 粤语，**范围外不是差一点，是拿汉字编造**，而且 `-l`
