@@ -152,6 +152,33 @@ CUDA 侧的行为差异只在 `CRISPASR_GPU_BACKEND` 这一个开关和 `ggml-cu
 - **③ 截断同样是静默的**（A）：`crispasr_backend_qwen3.cpp:807-818` 那个 `for (step < max_new)`
   的流式循环走到 `step + 1 == max_new` 就 `break`，全程没有一行"我撞预算了"的输出。
   所以真要动这条链的分块，**别指望日志告警**，只能自己数 token 或比对字数。
+- **④ "qwen3 有没有默认分块值"= 有，恒为 30 s；"整条全吃"要主动写 `--chunk-seconds 0`**（A，读码）。
+  CLI 的活默认在 `examples/cli/whisper_params.h:230-231`：`chunk_seconds = 30` +
+  `chunk_seconds_explicit = false`。`examples/cli/crispasr_run.cpp:1057-1063` 那条"没显式传 `-ck`
+  就把上限置 0"的豁免**只给声明了 `CAP_UNBOUNDED_INPUT` 或 `CAP_INTERNAL_CHUNKING` 的后端**，
+  而 qwen3 的能力表（`crispasr_backend_qwen3.cpp:56-58`）两个位都没置 ⇒ **qwen3 不传 `-ck` 也是 30 s，
+  开不开 VAD 都一样**（VAD 段仍被 30 s 再切，`crispasr_run.cpp:1153 → :1251`）。
+  AED 相反，它声明了 `CAP_UNBOUNDED_INPUT`（`crispasr_backend_firered_asr.cpp:36`），于是不传 `-ck` 时
+  上限被置 0，**而 0 在 VAD 模式下就是"没有上限"**：`crispasr_long_audio_fallback.h:57` 的
+  `if (wants_vad) return false` 让兜底不触发，VAD 段不管多长都整段进解码器，配 `min(T_sub, 150)` 的硬顶
+  —— 这才是 `../CrispASR-FireRed/README.md` §5.1 ③ 那个丢字洞的完整机制（不是"全吃"这一个词能说清的）。
+  上游自己的措辞在 `HISTORY.md:6210-6216`："VAD slices on a `CAP_UNBOUNDED_INPUT` backend were capped at
+  30 s … Mirror the CLI: VAD on + `CAP_UNBOUNDED_INPUT` + `chunk_seconds` not explicit ⇒
+  `effective_chunk_seconds=0` (VAD bounds the slices)"。⇒ **这就是两份驱动都必须显式传 `--chunk-seconds` 的原因**：
+  AED 不传就没有上限、直接撞 150，qwen3 不传就是写死 30。
+  另外三条同一口径的读码：
+  ① **不开** VAD、音频 >30 s、也没传 `-ck` 时，`crispasr_run.cpp:1095`（`kLongAudioFallbackChunkSeconds = 30`）
+  与 `:1121-1133` 兜底按 30 s 定长切，并打 `auto-chunking at 30 s to keep encoder in its safe window`，
+  提示语里明写"要整趟就 `--chunk-seconds 0`"；这条兜底被 `!(capabilities & CAP_UNBOUNDED_INPUT)`（`fallback.h:61`）
+  挡住，所以只对 AED 那类后端有意义，对 qwen3 是空转（它的 `effective` 本来就不是 0）。
+  ② qwen3 没有覆写 `prefers_vad()`（基类 `crispasr_backend.h:358` 返回 false，全文只有 cohere / gemma4 /
+  parakeet 覆写），所以它不会自动帮你开 VAD。
+  ③ `crispasr_run.cpp:1153-1157` 的 `slice_chunk_seconds` 只在后端自己声明 `vad_slice_cap_seconds() > 0`
+  时才额外收紧（全文只有 `crispasr_backend_parakeet.cpp:335` 给了），qwen3 与 firered 都是基类的 0 ⇒
+  传进去的 `--chunk-seconds` 就是 VAD 段的唯一再切上限。
+  ⇒ 结论：**qwen3 默认 30 s 分块，全吃要主动 `--chunk-seconds 0`（`:1122` 的 `!chunk_seconds_explicit`
+  闸也是因为它，显式 0 才不被兜底覆盖），代价是 512 token 预算顶在约 75-90 s 连续语音（②③两层），
+  加上 KV 随音频线性涨。**
 - 复算路径：上游 clone 后 `git checkout d08ec2d`（= 0.8.37），逐行看上面给的 `文件:行`。
   本机没有 qwen3 权重，②这一档没做直测；要把 ② 从 B 提到 A，就找一段 >90 s 不被 VAD
   切断的连续语音，同一条素材在 `-n 512` 和 `-n 1024` 下各跑一遍比字数 —— 字数变了就是顶到了。
@@ -167,7 +194,7 @@ CUDA 侧的行为差异只在 `CRISPASR_GPU_BACKEND` 这一个开关和 `ggml-cu
 - **silero v6.2.0 对唱歌素材判 0 段 → 整条静默丢弃**（rc 仍为 0、不落 `.txt`）。
   口语素材上 v5/v6 打平（同一份 89.84 s 中文：切 5 段/75.78 s 对 7 段/75.88 s，墙钟
   55.9 对 56.1 s），但"口语打平"不等于"全语料打平"。**而且这份驱动不写 `no_speech.txt`**
-  ——记账逻辑在 `xhs-asr.py` 和 CPU 版那份里，这份不改（驱动 CONFIG 一节末尾那条注释就写着这件事）。
+  ——记账逻辑在 `crisper-xhs-qwen-asr.py` 和 CPU 版那份里，这份不改（驱动 CONFIG 一节末尾那条注释就写着这件事）。
   要吞了多少的账，用 `CrispASR-FireRed/` 那份驱动跑，或换 `firered-vad.gguf`。
 - `--stop` / STOP 文件是**批边界**退出，一批最长可能等 `BATCH_SIZE` × 单文件时长。
 - MSVC 4 件和（GPU 档才需要的）CUDA 运行库是两处人工门槛；前者 rc=127 已实测，

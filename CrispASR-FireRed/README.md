@@ -1,6 +1,7 @@
 # CrispASR-FireRed —— CrispASR / FireRedASR2-AED 的 GPU 双引擎批转链
 
-驱动是 `xhs-asr.py`，主力引擎是 CrispASR 的 `firered-asr` backend
+驱动是 `crisper-xhs-qwen-asr.py`（10-08 前的旧名是 `xhs-asr.py`，两份是同一个文件；名字里的
+qwen 指兜底那台引擎，主力仍是 AED），主力引擎是 CrispASR 的 `firered-asr` backend
 （FireRedASR2-AED：Conformer 编码器 + AED 解码器，**小红书自家**那套的 gguf 量化件），
 兜底引擎是 `qwen3`。跑在 CUDA 上，一次调用喂多个 `-f`、模型只加载一次。
 
@@ -52,9 +53,9 @@ py -3 -m venv .venv
 ## 2. 跑
 
 ```bat
-.venv\Scripts\python xhs-asr.py --start   :: 分离后台启动
-.venv\Scripts\python xhs-asr.py --stop     :: 写 STOP 标志，下一批边界干净退出
-.venv\Scripts\python xhs-asr.py            :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
+.venv\Scripts\python crisper-xhs-qwen-asr.py --start   :: 分离后台启动
+.venv\Scripts\python crisper-xhs-qwen-asr.py --stop     :: 写 STOP 标志，下一批边界干净退出
+.venv\Scripts\python crisper-xhs-qwen-asr.py            :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
 ```
 
 **关掉启动它的那个控制台 = 连坐杀 crispasr 子进程**（Job Object 是故意绑上去的，
@@ -190,10 +191,27 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
 * 本包这份驱动走的是 CLI（`crispasr.exe` 子进程），命令里**没有** `-bs`，所以取 CLI 的默认档。
   10-08 校机实测已核到：**不给 `-bs` 时日志逐条是 `firered_asr: decoder starting (max_len=150, beam=3, layers=16)`
   ⇒ 默认档就是 3**；给 `-bs 1` 才变 `beam=1`。`--help` 里那行 `-bs N [greedy]` 与运行时不一致，以运行时为准。
+  10-08 之后把"CLI 不给 `-bs` 时那个默认值到底是几"这条从推断升级成了读码（等级 A，`git show d08ec2d` 可复现）：
+  CLI 的活参数表是 `examples/cli/whisper_params.h:31`，`int32_t beam_size = -1;`，行尾注释写着
+  "-1 = greedy; beam search only when explicitly set via -bs N" —— **这句注释对 qwen3 成立（`-1 > 1` 为假 ⇒ 不进
+  beam 分支），对 AED 不成立**，因为上面那条适配器三元式把 -1 折成了 3。另：`cli.cpp:69` 那份带
+  `whisper_full_default_params(...)` 的参数表整体在 `#if 0` 死块里（`:56` 起），早先"CLI 默认取自 whisper 默认参数"
+  那句是读错了活代码，作废。
   要知道自己拿到的是哪一档，就对着日志里 `firered_asr: decoder starting (max_len=…, beam=…, …)`
   那一行看（`src/firered_asr.cpp:2269-2271`，verbosity ≥ 1 就打 = 默认会打，加了 `-q` / 静默档就不打）。
   速度代价也实测了：beam=3 比 `-bs 1` 慢 35%（12 线程）～49%（18 线程），加线程救不回来；
   "beam=3 更准"这一条**没有实测**，只是先验，动它之前自己复验。
+* **温度（`-tp/--temperature`）不是 AED 的旋钮**（A，读码）：`--help` 那行
+  （`examples/cli/cli.cpp:1046-1047`，默认 0.00）是通用的，但 firered 适配器全文不读
+  `params.temperature`，`src/firered_asr.cpp` 也没有这个符号，能力表里没置 `CAP_TEMPERATURE`
+  （`crispasr_backend_firered_asr.cpp:36-37`）⇒ 对 AED 传 `-tp` 是被静默忽略。
+  真读它的是 LLM 那类后端：`crispasr_backend_qwen3.cpp:370` 塞进解码配置，`:396-399` 只在
+  `temperature > 0` 时才把 argmax 换成 `sample_temp`（`src/core/greedy_decode.h:114`：logits 除以 T
+  → softmax → 按分布抽，配 `--seed`），`:374` 的 `n_runs = (T > 0 && best_of > 1) ? best_of : 1`
+  说明 **qwen3 的"多条路径"是 best-of-N 独立采样再取累计分（`:429-430` 打 `best-of-N picked score=`），
+  不是 beam**；beam 那路要 `-bs > 1` 才走（`:269-305`，`core_beam_decode`）。
+  `--temperature-inc`（默认 0.2）全文只被 whisper 家族读（`cli.cpp:2997`、
+  `crispasr_backend_crispasr.cpp:120`），AED 与 qwen3 都不认。
 
 **③ 每个切片的解码上限是硬顶 150 token，没有任何 CLI 参数能改 —— 所以 `--chunk-seconds` 不是速度参数。**
 
@@ -216,7 +234,14 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
   实现（`src/firered_vad.cpp:446` 起）只有 `min_speech_sec` / `min_silence_sec`，**没有** 上游 FireRedVAD
   那个 `max_speech_frame=2000`（= 20 s）的长段强切。也就是说在这份构建里，切片的唯一上限就是
   `--chunk-seconds`，它必须 ≤ 20 s 才落在 150 token 之下。
-* 本包的处置：`xhs-asr.py` 的 `VAD_MAX_SEGMENT_SEC` 由 30 改成 **20**。
+* 补一层机制（10-09 读码，A）：**不传 `--chunk-seconds` 时这个上限不是"30"，而是没有**。
+  `examples/cli/crispasr_run.cpp:1058-1062` 见到 AED 的 `CAP_UNBOUNDED_INPUT` 就把
+  `effective_chunk_seconds` 置 0，而 `examples/cli/crispasr_long_audio_fallback.h:57` 的
+  `if (wants_vad) return false` 让那条 30 s 兜底在开了 `--vad` 时不触发 ⇒ VAD 段多长就整段喂多长
+  （`:1153 → :1251` 把 0 原样传进 `crispasr_compute_audio_slices`）。所以这条链上"传不传 `-ck`"
+  是内容完整性参数，不是速度参数；上游对同一件事的措辞见 `CrispASR-Qwen/README.md` §4.1 ④ 引的
+  `HISTORY.md:6210-6216`。
+* 本包的处置：`crisper-xhs-qwen-asr.py` 的 `VAD_MAX_SEGMENT_SEC` 由 30 改成 **20**。
 * 这个坑**只咬 AED**：qwen3 那条解码预算是 `max_new_tokens`（默认 512，`-n` 能改），
   30 s 档离顶还有 2~3 倍，所以 `CrispASR-Qwen/` 与 `cpu` 分支 `Qwen3/` 的 30 没动 ——
   推导与复核方法记在 `../CrispASR-Qwen/README.md`。

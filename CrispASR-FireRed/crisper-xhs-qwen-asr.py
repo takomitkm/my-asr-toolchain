@@ -1,5 +1,6 @@
 r"""
 CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底,由 crispasr-Qwen.py 复制而来
+(10-08 起改用本名,旧名 xhs-asr.py;名字里的 qwen 指兜底那台引擎,主引擎仍是 FireRed AED)
 
 本文件与 crispasr-Qwen.py 的差异在引擎组合、VAD、标点、语种处理和"换引擎"这件事由谁
 来做这几处;队列、硬链接暂存、批内结算、单实例锁、Job Object、通知全部原样沿用。
@@ -80,7 +81,7 @@ CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底
     模型、判别模型逐个 os.path.isfile 校验,缺哪个报哪个(全部字面路径集中在文件顶部
     CONFIG · 外部资源 那一段)。
 
-用法不变:python xhs-asr.py 前台跑 / --start 后台跑 / --stop 优雅停止。
+用法不变:python crisper-xhs-qwen-asr.py 前台跑 / --start 后台跑 / --stop 优雅停止。
 
 以下驱动行为原样继承 crispasr-Qwen.py(对比最早那版逐文件调用 crispasr 的脚本):
   · 一次 crispasr.exe 调用喂多个 -f,模型 / VAD 只加载一次(旧版每文件重载 1.7B 权重)
@@ -1695,10 +1696,10 @@ def main_loop() -> int:
 # 写死了 python.exe 的绝对路径、PowerShell 调用和反斜杠,换机器或迁 Linux 都得重
 # 写一遍;收进本文件后启动方式和配置在同一处,Windows / POSIX 各走各的进程分离参数。
 #
-#   python xhs-asr.py                前台跑(关窗口即断,但 Job Object 会连带杀掉
+#   python crisper-xhs-qwen-asr.py                前台跑(关窗口即断,但 Job Object 会连带杀掉
 #                                      crispasr.exe,不会留孤儿占显存)
-#   python xhs-asr.py --start    后台跑,控制台输出重定向到 txt\log\console_*.log
-#   python xhs-asr.py --stop     建 STOP 标志,实例在下一批边界优雅退出
+#   python crisper-xhs-qwen-asr.py --start    后台跑,控制台输出重定向到 txt\log\console_*.log
+#   python crisper-xhs-qwen-asr.py --stop     建 STOP 标志,实例在下一批边界优雅退出
 #
 # --start 先抢一次锁再放掉,只为把"已经有实例在跑"报在当场,而不是让后台子进程
 # 静默起一个然后自己退掉。真正防并发仍靠子进程里的那次 acquire_lock。
@@ -1747,7 +1748,7 @@ def cmd_stop() -> int:
 
 if __name__ == "__main__":
     _arg = (sys.argv[1] if len(sys.argv) > 1 else "").lower()
-    _USAGE = ("用法: python xhs-asr.py [--start | --stop]\n"
+    _USAGE = ("用法: python crisper-xhs-qwen-asr.py [--start | --stop]\n"
               "  (无参数)  前台转写整个队列\n"
               "  --start   后台转写(控制台输出 -> txt\\log\\console_*.log)\n"
               "  --stop    让在跑的实例在下一批边界退出\n")

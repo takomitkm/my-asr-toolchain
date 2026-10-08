@@ -1,6 +1,6 @@
 {
  "engine": "CrispASR / firered-asr（CUDA）",
- "driver": "xhs-asr.py",
+ "driver": "crisper-xhs-qwen-asr.py",
  "branch": "gpu",
  "note": "主引擎 FireRedASR2-AED + 兜底 qwen3 的双引擎驱动。兜底档在判到 AED 语种范围外时才用，所以 qwen3 那份权重也是必须组件。",
  "roots": {
