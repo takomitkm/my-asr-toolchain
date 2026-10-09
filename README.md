@@ -13,15 +13,54 @@
 | 分支 | 目录 | 驱动 | 跑在哪 |
 |---|---|---|---|
 | `main` | —— | —— | 只有这一页 |
-| `cpu` | `FireRed-ONNX/` | `xhs-chain-cpu.py` | 无显卡机器（纯 onnxruntime，四件全链） |
-| `cpu` | `Qwen3/` | `crispasr-Qwen-cpu.py` | 无显卡机器（CrispASR CPU 构建，单模型出成品） |
-| `gpu` | `CrispASR-FireRed/` | `crisper-xhs-qwen-asr.py` | 有 CUDA 的机器（语种闸门判到范围内 → FireRedASR2 的 ONNX 全链，编码器可上 N 卡；范围外回退 crispasr qwen3。`PRIMARY_LEG="crispasr"` = 10-09 之前的双引擎走法，留着当降级与对拍参照） |
-| `gpu` | `CrispASR-Qwen/` | `crispasr-Qwen.py` | 有 CUDA 的机器（qwen3 单引擎） |
-| `gpu` | `faster_whisper/` | `whisper-batch10.py` | 有 CUDA 的机器（faster-whisper large-v3） |
+| `cpu` | `FireRed-ONNX/` | `Oc-fired.py` | 无显卡机器（纯 onnxruntime，四件全链） |
+| `cpu` | `Qwen3/` | `Cc-qwen.py` | 无显卡机器（CrispASR CPU 构建，单模型出成品） |
+| `gpu` | `CrispASR-FireRed/` | `Wlid-Og-fired-Cg-qwen.py` | 有 CUDA 的机器（语种闸门判到范围内 → FireRedASR2 的 ONNX 全链，编码器可上 N 卡；范围外回退 crispasr qwen3。`PRIMARY_LEG="crispasr"` = 10-09 之前的双引擎走法，留着当降级与对拍参照） |
+| `gpu` | `CrispASR-Qwen/` | `Cg-qwen.py` | 有 CUDA 的机器（qwen3 单引擎） |
+| `gpu` | `faster_whisper/` | `Wg-large.py` | 有 CUDA 的机器（faster-whisper large-v3） |
 
 每个目录自己是一份完整交付：`README.md`（复原三步 + 路径与环境变量表 + 组件出处等级表 +
 已知洞）、`assets.json`（机器可读清单）、`fetch_assets.py`（通用下载/验收器，标准库实现）、
 `requirements.txt`。选一条链照那个目录的 README 走就行，跨目录不用互相看。
+
+## 驱动的命名记号法
+
+文件名里就写清楚"哪条腿、什么引擎、跑在哪类机器、按什么次序"。一个 `-` 分隔的段 = 一条腿，
+段内按 **引擎字母 + 机器档 + 模型词（全小写）** 拼，段的次序就是运行次序（最左边的先跑）：
+
+| 记号 | 含义 |
+|---|---|
+| `W` | whisper 系（whisper-tiny 只做语种判别；faster-whisper 做转写） |
+| `C` | CrispASR（gguf 权重那套引擎，`--backend` 选 fired / qwen） |
+| `O` | FireRedASR2S 的 ONNX 链路（纯 onnxruntime，无 torch、无 sherpa-onnx） |
+| `g` | 这条腿要吃 CUDA / N 卡 |
+| `c` | 这条腿纯 CPU |
+| `fired` | FireRedASR2-AED |
+| `qwen` | qwen3-ASR |
+| `large` | whisper large-v3 权重 |
+| `lid` | 只出语种码、不出文本 |
+
+五个驱动逐个拆读。旧名一并列着，因为 10-10 之前的记录、日志和外部引用用的全是旧名：
+
+| 现名 | 拆读 | 10-10 前的旧名 |
+|---|---|---|
+| `Wlid-Og-fired-Cg-qwen.py` | whisper 先判语种 → 判到范围内走 FireRed ONNX 全链（N 卡）→ 判到范围外回退 crispasr qwen3（N 卡） | `Wlid-Og-fired-Cg-qwen.py`（10-08 前叫 `xhs-asr.py`） |
+| `Cg-qwen.py` | crispasr qwen3，N 卡 | `Cg-qwen.py` |
+| `Wg-large.py` | faster-whisper large-v3，N 卡 | `Wg-large.py`（`batch10` 是当时的批大小 10） |
+| `Oc-fired.py` | FireRed ONNX 全链，CPU | `Oc-fired.py` |
+| `Cc-qwen.py` | crispasr qwen3，CPU | `Cc-qwen.py` |
+
+两处边界写在这，免得被当成漏改：
+
+* 全套只有 `Wlid` 这一段没标机器档。它实际被驱动钉在 CPU 上跑 —— 闸门那两次 crispasr 短调用
+  固定传 `--gpu-backend cpu`（独显要留给主链，这两步各只要半秒到一秒，为它们建一次 CUDA
+  上下文纯属浪费，还多一份 ggml-cuda 常驻显存）。
+* **被 `import` 的东西不进这套命名**：`asr_chain.py` / `aed_ort.py` / `lid_onnx.py` /
+  `infer_onnx.py` 一律保持原名 —— 连字符不是合法的 Python 标识符字符，`import O-fired` 当场
+  是语法错误，而这几件都是按模块名被 import 进来的。`fetch_assets.py` / `setup.py` /
+  `dequant_aed.py` / `dequant_punc.py` / `lid_export*.py` 同样没改：它们的名字里不含
+  "引擎 × 模型 × 机器"这三样，套不进这套字母（`dequant_*` 那两件还被 `fetch_assets.py`
+  按文件名起子进程调用，动它们要连清单一起动）。
 
 ## 四条链怎么选
 
@@ -49,7 +88,7 @@ ONNX，但语种闸门那两步和 qwen3 兜底那一趟仍然是 crispasr.exe�
 
 ## 两个最新的驱动，简要说明
 
-**`gpu` 分支 `CrispASR-FireRed/crisper-xhs-qwen-asr.py`** —— 生产机现役的那份。10-09 起
+**`gpu` 分支 `CrispASR-FireRed/Wlid-Og-fired-Cg-qwen.py`** —— 生产机现役的那份。10-09 起
 出厂主腿是 ONNX（`PRIMARY_LEG = "onnx"`），旧的 crispasr 双引擎走法留成
 `PRIMARY_LEG = "crispasr"`，既是权重/闸门缺席时的降级路径，也是同机对拍的参照。
 它解决的问题是"一个引擎的语种覆盖面不够"：FireRedASR2-AED 的中文信息保留度比 qwen3 稳
@@ -91,7 +130,7 @@ silero（v6 会把唱歌素材判 0 段、整条静默丢弃）—— 闸门那�
 时仍是老形态：一次 crispasr 调用喂多个 `-f`（模型/VAD 只加载一次），筛子那套
 `_lid_map` 从 stderr 逐文件对号。
 
-**`cpu` 分支 `FireRed-ONNX/xhs-chain-cpu.py`** —— 无显卡机器上的那条链，四个环节
+**`cpu` 分支 `FireRed-ONNX/Oc-fired.py`** —— 无显卡机器上的那条链，四个环节
 （FireRedVAD → FireRedASR2-AED → FireRedPunc → 可选 FireRedLID）**全部纯 onnxruntime**，
 不需要 CUDA、不需要 gguf 量化那层。它和上面那份驱动 I/O 逐条相同，两套可互换；
 `--check` 那套资源复原也是同一个形态（`assets.json` + `fetch_assets.py` + `setup.py`）。

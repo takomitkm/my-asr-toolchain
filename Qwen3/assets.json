@@ -1,6 +1,6 @@
 {
   "engine": "Qwen3",
-  "driver": "crispasr-Qwen-cpu.py",
+  "driver": "Cc-qwen.py",
   "branch": "cpu",
   "note": "无显卡 CPU 机器的 Qwen3-ASR 批转链。清单里每条的 sha256 都是作者生产机上那份实测出来的，且除 manual 项外都与发布方给的哈希一致（GitHub release digest / HuggingFace LFS oid），所以照链接下载 = 拿到同一个文件。",
   "roots": {

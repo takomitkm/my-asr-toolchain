@@ -1,7 +1,7 @@
 r"""
 CrispASR 批量转写驱动(Windows · 无显卡 CPU 服务器副本)
 
-本文件是 crispasr-Qwen.py 的副本,为【没有显卡、只有 CPU 的机器】改过:
+本文件是 Cg-qwen.py 的副本,为【没有显卡、只有 CPU 的机器】改过:
   · 数据面与模型路径一律走"环境变量优先,否则落在本包目录"(见 CONFIG · 外部资源)
   · --gpu-backend cpu、-t 0(= 自动取逻辑线程数的 0.75 倍,24 vCPU 的机器上就是 18;
     系数来自本机 -t 扫点,见 CONFIG · CrispASR 的线程数一节)
@@ -34,7 +34,7 @@ CrispASR 批量转写驱动(Windows · 无显卡 CPU 服务器副本)
   · 后台启动 / 优雅停止收进本文件(--start / --stop),不再依赖数据盘上的两个 .bat,
     POSIX 下走 start_new_session,迁移时只改 CONFIG 里的路径
   · 只依赖标准库 + send2trash —— 任何 3.10+ 的 Python 都能跑,先
-    python -m pip install -r requirements.txt,再 python crispasr-Qwen-cpu.py;
+    python -m pip install -r requirements.txt,再 python Cc-qwen.py;
     原作者的生产环境用的是免安装 embeddable Python(随数据盘附带、不用管理员权限),
     --start 派生后台进程复制的是 sys.executable,所以谁启动就用谁
 """
@@ -144,7 +144,7 @@ CRISPASR_LID_MODEL = os.path.join(MODEL_DIR, "ggml-tiny.bin")
 # (光 p/b.3537109134608937 就 30+ 条)。
 # 换成 firered 的选项【已排除,这份不改】:代价 +31% 墙钟,而且本包复原出来的 model\ 里
 # 【没有】firered-vad.gguf(2,357,952 B),要换得先自己拷进 MODEL_DIR;
-# crisper-xhs-qwen-asr.py(GPU 那台)用 firered,完整说明在那份的 CONFIG · VAD。
+# Wlid-Og-fired-Cg-qwen.py(GPU 那台)用 firered,完整说明在那份的 CONFIG · VAD。
 # 顺带:-vt 救不了 silero v6(0.50/0.25/0.02 三档全是 0 段),而且这个参数在 crispasr 的
 # silero 路径上语义可疑(口语素材 -vt 0.95 反而从 7 段变 13 段),别拿它调。
 # 要看 firered 的逐帧概率就加 --firered-vad-debug(它默认不吐段表)。
@@ -1179,11 +1179,11 @@ def main_loop() -> int:
 # 写死了 python.exe 的绝对路径、PowerShell 调用和反斜杠,换机器或迁 Linux 都得重
 # 写一遍;收进本文件后启动方式和配置在同一处,Windows / POSIX 各走各的进程分离参数。
 #
-#   python crispasr-Qwen-cpu.py            前台跑(关窗口即断,
+#   python Cc-qwen.py            前台跑(关窗口即断,
 #                                      但 Job Object 会连带杀掉 crispasr.exe,不留孤儿占显存)
-#   python crispasr-Qwen-cpu.py --start    后台跑,控制台输出重定向
+#   python Cc-qwen.py --start    后台跑,控制台输出重定向
 #                                      到 <输出目录>\log\console_*.log
-#   python crispasr-Qwen-cpu.py --stop     建 STOP 标志,实例在
+#   python Cc-qwen.py --stop     建 STOP 标志,实例在
 #                                      下一批边界优雅退出
 #
 # --start 先抢一次锁再放掉,只为把"已经有实例在跑"报在当场,而不是让后台子进程
@@ -1233,7 +1233,7 @@ def cmd_stop() -> int:
 
 if __name__ == "__main__":
     _arg = (sys.argv[1] if len(sys.argv) > 1 else "").lower()
-    _USAGE = ("用法: python crispasr-Qwen-cpu.py [--start | --stop]\n"
+    _USAGE = ("用法: python Cc-qwen.py [--start | --stop]\n"
               "  (依赖: 标准库 + send2trash,先 python -m pip install -r requirements.txt)\n"
               "  (无参数)  前台转写整个队列\n"
               "  --start   后台转写(控制台输出 -> <输出目录>\\log\\console_*.log)\n"

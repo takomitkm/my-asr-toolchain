@@ -49,12 +49,12 @@ Linux / macOS 同三条，把 `.venv\Scripts\` 换成 `.venv/bin/`（驱动本�
 ## 2. 跑
 
 ```bat
-.venv\Scripts\python crispasr-Qwen-cpu.py --start     :: 分离后台启动
-.venv\Scripts\python crispasr-Qwen-cpu.py --stop       :: 写 STOP 标志，下一批边界干净退出
-.venv\Scripts\python crispasr-Qwen-cpu.py              :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
+.venv\Scripts\python Cc-qwen.py --start     :: 分离后台启动
+.venv\Scripts\python Cc-qwen.py --stop       :: 写 STOP 标志，下一批边界干净退出
+.venv\Scripts\python Cc-qwen.py              :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
 ```
 
-I/O 契约（与 `../FireRed-ONNX/xhs-chain-cpu.py` **逐条相同**，两套可互换）：
+I/O 契约（与 `../FireRed-ONNX/Oc-fired.py` **逐条相同**，两套可互换）：
 
 - 递归扫 `ASRSOURCE\p` 下的音频（`.mp3 .m4a .mp4 .wav .oga .ogg .opus .flac .aac`），
   按**一级子目录分组**，组内按 mtime 升序；根上的散文件归 `p` 组。

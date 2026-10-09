@@ -31,10 +31,10 @@ FireRed ASR2 · 纯 ONNX 全链批量转写驱动（Windows / Linux / macOS · C
 （默认值全部落在脚本目录内，不含任何机器专属路径）。--help 看全部参数。
 
 用法示例：
-  python xhs-chain-cpu.py --help
-  python xhs-chain-cpu.py --data-root .\asr --models-dir .\asr\models            前台跑
-  python xhs-chain-cpu.py --data-root .\asr --start                              后台跑（参数原样带过去）
-  python xhs-chain-cpu.py --data-root .\asr --stop                               下一个文件边界优雅停止
+  python Oc-fired.py --help
+  python Oc-fired.py --data-root .\asr --models-dir .\asr\models            前台跑
+  python Oc-fired.py --data-root .\asr --start                              后台跑（参数原样带过去）
+  python Oc-fired.py --data-root .\asr --stop                               下一个文件边界优雅停止
 """
 
 import argparse
@@ -72,7 +72,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 def build_parser() -> argparse.ArgumentParser:
     ap = _Parser(
-        prog="xhs-chain-cpu.py",
+        prog="Oc-fired.py",
         formatter_class=_Formatter,
         description="FireRed ASR2 纯 ONNX 全链批量转写驱动（VAD -> AED -> Punc）",
         epilog="退出码：0 队列转完 / 1 有文件失败 / 2 引擎加载失败 / 3 连续失败熔断 / "

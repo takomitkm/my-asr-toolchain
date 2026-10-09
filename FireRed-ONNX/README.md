@@ -13,7 +13,7 @@ FireRedASR2 纯 ONNX 批量转写链（CPU · 不需要 torch / 不需要 sherpa
 ```bat
 setup.bat                                    :: 等价于 python setup.py：建 venv + 装依赖（两份 requirements 全装，下载约 73 MB）
 .venv\Scripts\python.exe fetch_assets.py --graph mixed   :: 下载 + 建造全部模型（常驻约 4.6 GB；int8 档 1.68 GB，见 4.1）
-.venv\Scripts\python.exe xhs-chain-cpu.py --input-dir .\audio --data-root .\data
+.venv\Scripts\python.exe Oc-fired.py --input-dir .\audio --data-root .\data
 ```
 
 Linux / macOS：
@@ -21,7 +21,7 @@ Linux / macOS：
 ```sh
 python3 setup.py                             :: 同上，venv 建在 .venv/（x86_64 下载约 79 MB，见 3.2）
 .venv/bin/python fetch_assets.py --graph mixed
-.venv/bin/python xhs-chain-cpu.py --input-dir /srv/audio --data-root /srv/asr
+.venv/bin/python Oc-fired.py --input-dir /srv/audio --data-root /srv/asr
 ```
 
 前两条也可以用系统 python；`fetch_assets.py` 不带 `--models` 时默认就落在包旁的 `models/`，
@@ -43,7 +43,7 @@ python3 setup.py                             :: 同上，venv 建在 .venv/（x8
 ```
 
 * 三个模型进程内**只加载一次**、跨文件复用；链内不起任何外部子进程。
-* 批量驱动 `xhs-chain-cpu.py` 直接 import `asr_chain.py` 复用同一份实现，
+* 批量驱动 `Oc-fired.py` 直接 import `asr_chain.py` 复用同一份实现，
   差别只有两点：模型保活、VAD 走内存直喂（不落临时 wav；float→int16 用 `rint`，
   与链路 `sf.write` 的 PCM_16 舍入口径一致）。
 * `asr_chain.py` 可以单独跑一条音频（`--json` 出结构化结果，含逐段边界和分环节耗时），
@@ -69,22 +69,24 @@ python3 setup.py                             :: 同上，venv 建在 .venv/（x8
 
 ## 2. 包里有什么
 
-随包的源码（`sha256` 取前 16 位，2026-10-06 本地计算）：
+随包的源码（`sha256` 取前 16 位，10-06 本地首算，10-10 因驱动改名整表重算过；那三件在 10-06
+之后就动过、表里的数当时已经过期 —— `Oc-fired.py` 43,517→43,513、`fetch_assets.py`、
+`setup.bat`，本轮一并刷成现势值）：
 
 | 文件 | 作用 | 必须 | sha256 |
 |---|---|---|---|
-| `xhs-chain-cpu.py` | 批量驱动：扫描/分组/续跑/结算/熔断/停止/后台化（Windows + Linux/macOS） | 是 | `c55c8d2d7948b52f` |
+| `Oc-fired.py` | 批量驱动：扫描/分组/续跑/结算/熔断/停止/后台化（Windows + Linux/macOS） | 是 | `8348f9ca603b4e4c` |
 | `asr_chain.py` | 三环核：VAD→AED→Punc 的加载与推理，单文件 CLI | 是 | `5ec36d4e60bcd443` |
 | `aed_ort.py` | FireRedASR2-AED 的纯 onnxruntime 实现（int8/f32/mixed 三种图，贪心与 beam） | 是 | `2d6018194602eb06` |
 | `models/fireredvad-onnx/infer_onnx.py` | FireRedVAD 的 ONNX 推理（上游原文件：HF `tardigrade-doc/FireRedVAD_onnx` 上那份，2026-10-06 在校机上实取逐字节相同） | 是 | `dda73c30f190956e` |
-| `fetch_assets.py` | 一键补全资源：下载 + 建造 + 逐件 sha256 验收 | 是 | `2c0cff9c63f83877` |
+| `fetch_assets.py` | 一键补全资源：下载 + 建造 + 逐件 sha256 验收 | 是 | `ae7982c98b3b6acc` |
 | `dequant_punc.py` | 把 `punc.q8w.onnx` 的 8-bit `MatMulNBits` 逆量化成普通 `MatMul`，产出 `punc.f32.onnx` | 建造期 | `631241ce963cfb21` |
 | `dequant_aed.py` | 把 sherpa 的动态量化 int8 图重写成纯 f32 图（外置权重 `.data`） | 建造期 | `b0637acb0979dd6e` |
-| `requirements.txt` | 转写运行时依赖（钉死版本，理由见第 7 节） | 是 | `b73c4f1978bc6892` |
+| `requirements.txt` | 转写运行时依赖（钉死版本，理由见第 7 节） | 是 | `6133e96d9c6ee2e5` |
 | `requirements-build.txt` | 建造期依赖（只要 `onnx`+`numpy`） | 建造期 | `7b7fc899cbddc8c0` |
-| `setup.py` | 建 venv + 装依赖 + 导入自检 + 列出还缺什么资源（Windows / Linux / macOS 同一个文件） | 方便用 | `2b2b5a0fee6a2280` |
-| `setup.bat` | Windows 上的壳：找到 python 就转过来调 `setup.py`，逻辑不在这里 | 方便用 | `e9c5e7062c6f92be` |
-| `rules.example.txt` | 后处理规则文件格式示例（**不是**产线那份，产线那份含具体词表、不随包发） | 否 | `e6b1bc6a0de3765b` |
+| `setup.py` | 建 venv + 装依赖 + 导入自检 + 列出还缺什么资源（Windows / Linux / macOS 同一个文件） | 方便用 | `e48ed0307fd69f5f` |
+| `setup.bat` | Windows 上的壳：找到 python 就转过来调 `setup.py`，逻辑不在这里 | 方便用 | `3aa0ea86831a077b` |
+| `rules.example.txt` | 后处理规则文件格式示例（**不是**产线那份，产线那份含具体词表、不随包发） | 否 | `5ea269894eb546b2` |
 | `.gitignore`、`.gitattributes` | 仓库元数据：把 `.venv/`、`__pycache__/` 和 `fetch_assets.py` 落下来的整棵 `models/` 资源树挡在库外（只放回上游那两份文本）；`.gitattributes` 就一行规则 `* -text` = **禁止 git 转换任何换行**，所以上面这张哈希表在 `git clone` 之后仍然逐字节可复算（bat 是 CRLF、`optional-lid/lid_onnx.py` 也带着产线那会的 CRLF、其余 LF）。手动拷包用时这两件不参与运行 | 只有进 git 才有用 | `daad8816a20170de` / `1ba7a18741202a76` |
 | `optional-lid/lid_onnx.py` | 自导 FireRedLID ONNX 的运行侧 | 否 | `26ca6bcd8441395b` |
 | `optional-lid/lid_export.py`、`lid_export_dec.py` | 从官方 torch 权重导出上面两个图（需要 torch） | 否 | `e48345553fdf2ce0` / `1d40f71034183b01` |
@@ -176,7 +178,7 @@ setup.py --skip-check       不跑最后那条资源核对
 
 | 位置 | Windows | Linux / macOS | 说明 |
 |---|---|---|---|
-| 单实例锁 `\.lock` | `msvcrt.locking`（`xhs-chain-cpu.py:295`） | `fcntl.flock`（`:299`） | 都能防重复启动；POSIX 侧靠关句柄放锁（`:320`） |
+| 单实例锁 `\.lock` | `msvcrt.locking`（`Oc-fired.py:295`） | `fcntl.flock`（`:299`） | 都能防重复启动；POSIX 侧靠关句柄放锁（`:320`） |
 | `--start` 后台化 | `DETACHED_PROCESS\|CREATE_NEW_PROCESS_GROUP`（`:880`） | `start_new_session=True` = setsid（`:883`） | Linux 上子进程脱离控制终端，关终端不会带走它 |
 | Ctrl+N 静音 | `msvcrt` 轮询按键（`:365`） | 没有 `msvcrt` → 那个线程 `ImportError` 直接 return | **Linux/macOS 只能用 `--stop` 或 Ctrl+C** |
 | `--on-done trash` | Send2Trash → 回收站 | Send2Trash → `~/.local/share/Trash`；库缺或抛异常 → 源文件保留 + 写一行 error 日志（`:542`） | 想留文件就显式 `--on-done keep` |
@@ -321,7 +323,7 @@ VAD 环节 1.0 s → 0.9 s，消掉的是那个尖峰（这两个数我没有独
 - 80.2 s 素材切出 7 段，最长 15.33 s；344.9 s 素材切出 48 段，最长 18.81 s；**超过 20 s 的段 0 个**。
 - 这个 20 s 不是配置项，是写死在 VAD 里的：`models/fireredvad-onnx/infer_onnx.py` 的 `max_speech_frame = 2000` 乘 `frame_shift_ms = 10` = 20 s，`_split_long()` 在 `process()` 里无条件调用（切点取段内概率最小的位置）。
 - 对照另一条链：CrispASR 那份构建的 firered VAD（`src/firered_vad.cpp:446` 起）只有 `min_speech_sec` / `min_silence_sec`，**没有**这个长段强切，所以它的切片上限只能靠 `--chunk-seconds` 给，而 AED 每个切片的解码预算又是写死的 `min(T_sub, 150)` token —— 两边一叠加，`--chunk-seconds 30` 就变成"每片必然顶到 150、尾部整句静默消失"（10-08 实测：30 s 档去标点正文比 20 s 档少 18 字与 79 字，撞顶率 2/3 与 7/12，而 rc 仍为 0、日志不报截断）。推导与复核方法在 `gpu` 分支 `CrispASR-FireRed/README.md` §5.1 ③。
-- 本包的解码侧上限是另一个量级、而且**可观测**：AED 图自带 `max_len = 1024` token，cache 长度按 `int(n_mel_frames / 100.0 * 8.0) + 4` 估（`aed_ort.py` 的 `_pick_cache_len()`），beam 路径写满就按需翻倍、上限才是 1024；一旦循环用尽没等到 EOS 就置 `truncated`，驱动结算时打一行 `有 N 段撞上 cache 上限被截断（文本可能缺尾）`（`xhs-chain-cpu.py`）。上面那 55 段全部没触发。
+- 本包的解码侧上限是另一个量级、而且**可观测**：AED 图自带 `max_len = 1024` token，cache 长度按 `int(n_mel_frames / 100.0 * 8.0) + 4` 估（`aed_ort.py` 的 `_pick_cache_len()`），beam 路径写满就按需翻倍、上限才是 1024；一旦循环用尽没等到 EOS 就置 `truncated`，驱动结算时打一行 `有 N 段撞上 cache 上限被截断（文本可能缺尾）`（`Oc-fired.py`）。上面那 55 段全部没触发。
 
 一句话：这条链把"分块"交给 VAD 硬保证、把"截断"交给日志明说，所以不会出现正文悄悄少一截的情况；换到 crispasr 那条时这两件事都没有，得自己盯 `--chunk-seconds` ≤ 20。
 ## 5. 第 2 步：跑
@@ -330,23 +332,23 @@ Windows：
 
 ```bat
 :: 前台
-.venv\Scripts\python.exe xhs-chain-cpu.py --input-dir .\audio --data-root .\data
+.venv\Scripts\python.exe Oc-fired.py --input-dir .\audio --data-root .\data
 
 :: 后台（其余参数原样带进后台实例）
-.venv\Scripts\python.exe xhs-chain-cpu.py --data-root .\data --start
+.venv\Scripts\python.exe Oc-fired.py --data-root .\data --start
 
 :: 看状态（只读，不改任何东西）/ 下一个文件边界优雅停止
-.venv\Scripts\python.exe xhs-chain-cpu.py --data-root .\data --status
-.venv\Scripts\python.exe xhs-chain-cpu.py --data-root .\data --stop
+.venv\Scripts\python.exe Oc-fired.py --data-root .\data --status
+.venv\Scripts\python.exe Oc-fired.py --data-root .\data --stop
 ```
 
 Linux / macOS 换成 `.venv/bin/python` 和 POSIX 路径，命令形状一模一样：
 
 ```sh
-.venv/bin/python xhs-chain-cpu.py --input-dir /srv/audio --data-root /srv/asr
-.venv/bin/python xhs-chain-cpu.py --data-root /srv/asr --start     # setsid 脱离终端
-.venv/bin/python xhs-chain-cpu.py --data-root /srv/asr --status
-.venv/bin/python xhs-chain-cpu.py --data-root /srv/asr --stop
+.venv/bin/python Oc-fired.py --input-dir /srv/audio --data-root /srv/asr
+.venv/bin/python Oc-fired.py --data-root /srv/asr --start     # setsid 脱离终端
+.venv/bin/python Oc-fired.py --data-root /srv/asr --status
+.venv/bin/python Oc-fired.py --data-root /srv/asr --stop
 ```
 
 默认目录布局（全部从 `--data-root` 派生，想分开放就各自再给一个参数；下面按 Windows 写法，
@@ -514,7 +516,7 @@ Linux 上分隔符是 `/`）：
 | 整包在**没装过这套链**的机器上从建环境到出文本全跑通 | A（**旧版 `setup.bat`**） | 2026-10-06：建 venv → `fetch_assets --graph int8`（1.68 GB 常驻，模型根实测 1,809,128,533 B）→ 6 个 wav 的脏队列（成功 4 / 空转写 1 / 失败 1，退 1，坏文件按相对路径进隔离区）→ 再跑 5 个干净文件（退 0）。**注意范围**：那一轮跑的是逻辑写在 bat 里的旧版；`setup.py` 是把同一套步骤搬进 python 的新件，**没有**再跑过一次（下一行） |
 | `setup.py` / 新版 `setup.bat` 跑通 | **D** | 只做了静态检查（`ast.parse` 过、help 串里无裸 `%`、bat 纯 ASCII + CRLF）。想核的人一条命令：`python setup.py --skip-check`（它只建 venv 和装依赖，不下模型） |
 | 钉版本在 Linux x86_64 / aarch64 有轮子、`requires_python` 与下载字节数 | A（2026-10-06 取 PyPI 官方 JSON `pypi.org/pypi/<包>/<版本>/json`） | 8 件运行侧 + `onnx==1.23.1` 逐个查：都有 `manylinux_*_x86_64` 与 `manylinux_*aarch64`（`kaldiio`/`Send2Trash` 是 `py3-none-any`）；numpy/scipy 标 `>=3.12`，ORT 1.20.1 最高 cp313；下载量 win 72.7 / x86_64 79.3 / aarch64 75.4 MB |
-| 驱动那四处 OS 分支的**写法**（锁、后台、按键、回收站） | A | 逐行读得出来：`xhs-chain-cpu.py:295/299/320`、`:365-370`、`:880/883`、`:542-547`。这是"代码里有这条分支"级别，不等于下一行 |
+| 驱动那四处 OS 分支的**写法**（锁、后台、按键、回收站） | A | 逐行读得出来：`Oc-fired.py:295/299/320`、`:365-370`、`:880/883`、`:542-547`。这是"代码里有这条分支"级别，不等于下一行 |
 | **整条链在 Linux/macOS 上跑通** | **D** | 没有 Linux 机器可跑：产线和本机都是 Windows。上面两行只证明"轮子存在 + 分支写了"。第一次在 Linux 上跑请按 3.3 的表逐条看，`--check` 和 `setup.py` 都不碰 OS 特殊路径，出问题先报这两步的原文 |
 | beam 解码能追上 greedy 的质量 | **D** | 产线**没调通**：beam(B=3) 慢 6 倍以上且截断+输出退化，留档不推荐 |
 
@@ -599,7 +601,10 @@ Linux 上分隔符是 `/`）：
 "CLI > `FIREDASR_*` 环境变量 > 相对脚本目录的默认值" → 大文件全部改成
 "下载 or 建造"并逐件写进 `fetch_assets.py` 的清单（哈希、字节数都在产线目录实测）→
 `setup.py` 做环境（Windows 上 `setup.bat` 只是转发它）、`fetch_assets.py` 做资源、
-`xhs-chain-cpu.py` 做转写。
+`Oc-fired.py` 做转写。
+
+10-10 包内按仓库根 README 的记号法改了驱动文件名（`xhs-chain-cpu.py` → `Oc-fired.py`），
+**产线那一份的文件名没跟着动**；12.1 的对照表两侧都按包内新名列出，去产线目录找文件时认旧名。
 
 行为与产线唯一的差别就是"没有默认凭据/没有默认词表"（第 10 节）；其余判据、
 退出码、结算规则一致。建造脚本（`dequant_*.py`）本来就在产线上，这里只是把它们的位置
@@ -613,7 +618,7 @@ Linux 上分隔符是 `/`）：
 | `models/fireredvad-onnx/infer_onnx.py` | `dda73c30f190956e` 17,442 | `dda73c30f190956e` 17,442 | **逐字节相同**（也是上游原文件） |
 | `dequant_aed.py` | `edfbed1c0d42a801` 8,148 | `b0637acb0979dd6e` 8,720 | 差异 **+9 行**：保存前删掉上一轮的 `out` 与 `out.data`（12.4 查出的追加 bug）。产线那份没有这段——它只在全新目录里建过一次，没碰到这个坑；若要在产线原地重建，先手动删掉同名 `.data` |
 | `asr_chain.py` | `851da03fb8c70ee3` 18,477 | `5ec36d4e60bcd443` 22,141 | 差异 **+78 / −15 行**：全部是把写死的路径/线程/档位换成参数 + 单文件 CLI 加了 `--lid`，判据与后处理（复读折叠、`RuleBaedTxtFix` 原样）未动。其中 12.4 查出的 `--models` 只搬 ASR、不搬 VAD/Punc 那个 bug 占 +7 行 |
-| `xhs-chain-cpu.py` | `428735e499b9fc20` 31,695 | `c55c8d2d7948b52f` 43,517 | 差异 **+361 / −168 行**：参数化 + 退出码诚实化（熔断回搬、结算、`--status/--stop/--start`）+ 第 10 节说的"凭据与路径清空"。两侧现在都有那两处退出码修正（产线 13:05 合入，`_Parser` 那条在产线落成"拼错参数退 6"的一行改动），也都有 4.3 的线程结论，但形态不同：产线是写死的 `ASR_THREADS = 12` / `VAD_THREADS = 8`，包内是默认值 `0.5×逻辑CPU` / `min(8, 逻辑CPU)` + `--threads` / `--vad-threads`（后者填 0 关闭封顶）。产线那次的实测表在 4.3，包内多出来的封顶逻辑另经 4 例无模型单元核对（`_orig_ss` 工厂在建完必还原、已显式设过线程数的 session 不被覆盖）。**10-06 下午 Linux 那一轮**只动了文本和打印：文件头说明改成"Windows / Linux / macOS"、13 条 help 里的示例路径由 `\` 改 `/`、两处 `§4.2` 引用改成 `§4.3`、`--start` 完成后那两行提示按平台分开打（Windows 保留"别关启动它的窗口"，POSIX 改说"已 setsid、关终端不带走"）——**判据与主循环逻辑一行未动，产线上不需要跟着换** |
+| `Oc-fired.py` | `428735e499b9fc20` 31,695 | `8348f9ca603b4e4c` 43,488 | 下面那句 ± 行数是 10-06 拿当时那版算的（当时包内 43,517 B），此后包内又动过 10-08/10-09 两轮、10-10 再改一次名，差值不再是现势；产线那侧 `428735e499b9fc20` 仍是 10-06 实测值。差异 **+361 / −168 行**：参数化 + 退出码诚实化（熔断回搬、结算、`--status/--stop/--start`）+ 第 10 节说的"凭据与路径清空"。两侧现在都有那两处退出码修正（产线 13:05 合入，`_Parser` 那条在产线落成"拼错参数退 6"的一行改动），也都有 4.3 的线程结论，但形态不同：产线是写死的 `ASR_THREADS = 12` / `VAD_THREADS = 8`，包内是默认值 `0.5×逻辑CPU` / `min(8, 逻辑CPU)` + `--threads` / `--vad-threads`（后者填 0 关闭封顶）。产线那次的实测表在 4.3，包内多出来的封顶逻辑另经 4 例无模型单元核对（`_orig_ss` 工厂在建完必还原、已显式设过线程数的 session 不被覆盖）。**10-06 下午 Linux 那一轮**只动了文本和打印：文件头说明改成"Windows / Linux / macOS"、13 条 help 里的示例路径由 `\` 改 `/`、两处 `§4.2` 引用改成 `§4.3`、`--start` 完成后那两行提示按平台分开打（Windows 保留"别关启动它的窗口"，POSIX 改说"已 setsid、关终端不带走"）——**判据与主循环逻辑一行未动，产线上不需要跟着换** |
 | `dequant_punc.py` | `1fba75c34f435c61` 7,893 | `631241ce963cfb21` 8,408 | 包内是重写版（docstring、边界处理、可被 `fetch_assets.py` 当模块调用）。**产物逐字节相同**：干净机上两次（含 `--only punc_f32 --force`）都造出 `71c54314cb8129e4…` = 产线 `punc.f32.onnx` |
 
 产线上还有两件**没**进包：一版更早的标点转换器（`tools/punc_convert/q8_to_f32.py`，
@@ -684,7 +689,7 @@ Linux 上分隔符是 `/`）：
 * **`--models` 只搬了 ASR**：`asr_chain.py` 里 `--models` 原来只重算 `MODELS` 和两个 LID 目录，
   `VAD_DIR`/`PUNC_DIR` 还停在导入时算好的"脚本旁 models"。表现是断句和标点去读旧目录，旧目录没有
   那份推理脚本就直接 `ModuleNotFoundError: No module named 'infer_onnx'`（校机实测）。上面的冒烟
-  就是加了 `--models` 的 VAD/Punc 派生之后才跑起来的。批量驱动 `xhs-chain-cpu.py` 不受影响——它是
+  就是加了 `--models` 的 VAD/Punc 派生之后才跑起来的。批量驱动 `Oc-fired.py` 不受影响——它是
   import 之后再逐个给全局赋值，本来就覆盖到了；环境变量那条路（`FIREDASR_MODELS`）也不受影响，
   因为派生发生在导入时。
 

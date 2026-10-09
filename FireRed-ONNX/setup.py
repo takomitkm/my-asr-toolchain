@@ -164,7 +164,7 @@ def step5_next(vp: Path, pyver: str):
     say(f"    {vp} fetch_assets.py --graph f32       全解耦：占 6.02 GB，峰值 6.80 GB")
     say("    要代理就加  --proxy http://127.0.0.1:7890")
     say("第 3 步转写：")
-    say(f"    {vp} xhs-chain-cpu.py --input-dir <音频目录> --data-root <数据根>")
+    say(f"    {vp} Oc-fired.py --input-dir <音频目录> --data-root <数据根>")
     say("    Windows 上直接前台跑就行；要后台加 --start，但别关掉启动它的那个窗口（同 job 会连坐）")
     say("    Linux/macOS 上 --start 走 setsid，脱离控制终端，关终端不会带走它；停止一律 --stop")
     say("尺寸与哈希清单见 README.md 第 4.1 节。")
