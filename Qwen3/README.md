@@ -117,6 +117,30 @@ Python 侧只用到 `Send2Trash`（驱动顶部 `from send2trash import send2tra
 - **30 s 离顶还有两三倍**（B，外推，不是直测——校机上那份 1.39 GB 的 qwen3 gguf 已随旧测试目录删掉，没有权重就测不了这一档）。正常切片是停在 EOS 而不是停在 512（`crispasr_backend_qwen3.cpp:262-267` 取 `<|im_end|>` 的 id，循环条件 `gen.back() != cfg.eos_id`）。同权重同素材的本机实测是连续中文旁白约 5.5 token/s、每 30 s 用量 100-135 token，Qwen3 的词表对中文更碎（只会比这个数大不会小），保守按 2 倍算，30 s ≈ 200-270 token，占 512 的 39%-53%。**顶真正会咬人的地方是长音频整趟解码**：VAD 漏切的长段、或把 `--chunk-seconds` 设成 0（不分块），大约 **75-90 s 连续语音**才够到 512。
 - **截断同样是静默的**（A）：`crispasr_backend_qwen3.cpp:807-818` 那个 `for (step &lt; max_new)` 的流式循环走到 `step + 1 == max_new` 就直接 `break`，全程没有一行"我撞预算了"的输出。所以真要改这条链的分块，别指望日志告警，只能自己数 token 或比对字数。
 
+**"qwen3 有没有默认分块值"= 有，恒为 30 s；"整条全吃"要主动写 `--chunk-seconds 0`**（10-09 读码，A）。
+上面那句"30 不动"容易被读成"30 是我们挑的"，实际不是：**30 是 crispasr 写死的默认，本包只是没去改它**。
+CLI 的活默认在 `examples/cli/whisper_params.h:230-231`（`chunk_seconds = 30` + `chunk_seconds_explicit = false`），
+而 `examples/cli/crispasr_run.cpp:1057-1063` 那条"没显式传 `-ck` 就把上限置 0"的豁免**只给声明了
+`CAP_UNBOUNDED_INPUT` 或 `CAP_INTERNAL_CHUNKING` 的后端**，qwen3 的能力表（`crispasr_backend_qwen3.cpp:56-58`）
+两个位都没置 ⇒ **不传 `-ck` 也是 30 s，开不开 VAD 都一样**（VAD 段仍被 30 s 再切，`crispasr_run.cpp:1153 → :1251`）。
+AED 相反：它声明了 `CAP_UNBOUNDED_INPUT`（`crispasr_backend_firered_asr.cpp:36`），不传 `-ck` 时上限被置 0，
+**而 0 在 VAD 模式下就是"没有上限"** —— `crispasr_long_audio_fallback.h:57` 的 `if (wants_vad) return false`
+让兜底不触发，VAD 段不管多长都整段进解码器，配 `min(T_sub, 150)` 的硬顶；这就是 `gpu` 分支
+`CrispASR-FireRed/README.md` §5.1 ③ 那个丢字洞的完整机制，不是"全吃"一个词能说清的。上游自己的措辞在
+`HISTORY.md:6210-6216`："VAD slices on a `CAP_UNBOUNDED_INPUT` backend were capped at 30 s … Mirror the CLI:
+VAD on + `CAP_UNBOUNDED_INPUT` + `chunk_seconds` not explicit ⇒ `effective_chunk_seconds=0` (VAD bounds the slices)"。
+⇒ **仓里所有 crispasr 驱动都必须显式传 `--chunk-seconds`**：AED 不传就没有上限、直接撞 150，qwen3 不传就是写死 30。
+再加三条同一口径的读码：① **不开** VAD、音频 >30 s、也没传 `-ck` 时，`crispasr_run.cpp:1095`
+（`kLongAudioFallbackChunkSeconds = 30`）与 `:1121-1133` 兜底按 30 s 定长切，并打
+`auto-chunking at 30 s to keep encoder in its safe window`，提示语里明写"要整趟就 `--chunk-seconds 0`"；
+这条兜底被 `fallback.h:61` 的 `!(capabilities & CAP_UNBOUNDED_INPUT)` 挡住，对 qwen3 是空转（它的 `effective` 本来就不是 0）。
+② qwen3 没有覆写 `prefers_vad()`（基类 `crispasr_backend.h:358` 返回 false，全文只有 cohere / gemma4 / parakeet 覆写），
+所以它不会自动帮你开 VAD。③ `crispasr_run.cpp:1153-1157` 的 `slice_chunk_seconds` 只在后端自己声明
+`vad_slice_cap_seconds() > 0` 时才额外收紧（全文只有 `crispasr_backend_parakeet.cpp:335` 给了），qwen3 与 firered
+都是基类的 0 ⇒ 传进去的 `--chunk-seconds` 就是 VAD 段的唯一再切上限。
+⇒ 结论：**qwen3 默认 30 s 分块；"整条全吃"要主动写 `--chunk-seconds 0`，代价是 512 token 预算顶在约 75-90 s
+连续语音（上面第二条与这条 ④），加上 KV 随音频线性涨。**
+
 复算路径：上游 clone 后 `git checkout d08ec2d`（= 0.8.37，发布件 `crispasr.exe --version` 打的 git sha 就是它），照上面给的 `文件:行` 逐行读。要把第二条从 B 提到 A：找一段 &gt;90 s 不被 VAD 切断的连续语音，同一条素材在 `-n 512` 与 `-n 1024` 下各跑一遍比字数——字数变了就是顶到了。
 ## 5. 已知洞与边界
 
