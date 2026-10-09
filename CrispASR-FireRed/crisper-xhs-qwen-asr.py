@@ -486,6 +486,14 @@ CRISPASR_THREADS     = 6
 #     (src/crispasr_lid.cpp:284;会挑语音段的 crispasr_lid_speech_prefix 只有 server
 #     路径用)。开头是片头音乐的文件,语种等于按音乐定 —— 这是本语料最常见的形态,
 #     也是判别最主要的失手点。
+#     10-09 拿切片把这条钉死了:同一件素材只用 ffmpeg 截前 15 秒、再用闸门那条命令
+#     (-m ggml-tiny.bin -t 2 --gpu-backend cpu -f <ASCII 名> -dl)判,得到的就是筛子的数 ——
+#     66.9 s 那件 head15 → km p=0.410626(批次日志 km p=0.411)、617.8 s 那件
+#     head15 → ko p=0.404644(批次日志 ko p=0.405),按 %.3f 逐位对上;而同两件改成
+#     head30 判出的是 zh p=0.215178 / zh p=0.993594。⇒ 筛子那两个"外语"结论全部来自
+#     片头那 15 秒,人声在第 15-30 秒才进来。注意方向:闸门读的是 whisper 后端自己那行
+#     auto-detected language,窗口是【30 秒】,不受这个 15 秒截断约束(逐条数字见
+#     README.md §6.6)。
 #
 # (7) 没有置信度闸门:CRISPASR_SILERO_LID_MIN_LOGIT 只作用于 silero。whisper 路径实测
 #     判到 p=0.395(中文播客判成 en)也照样往下走,没法"判得不确信就当没说"。
@@ -701,9 +709,13 @@ ONNX_PUNC_FILE = os.environ.get("FIREDASR_ONNX_PUNC_FILE", "")   # 空 = 先 pun
 # ---------- 执行提供者:只用 N 卡 ----------
 # cpu = 纯 CPU;cuda = CUDA EP(只会挑中 NVIDIA 独显)。这条链【不列】DirectML 与
 # OpenVINO —— 那两个能把 AMD 核显挑中,而要求是绝不用核显。
+# 出厂值取 cuda:本分支的存在理由就是有 N 卡的机器,10-09 同一批三件素材实测
+# cuda RTF 0.427 对纯 CPU 0.566(逐字与出处见 README.md §6.6)。
 # 装了 onnxruntime-gpu 也不代表用上了显卡:CUDA/cuDNN 运行库不齐时 ORT 只打一行警告
-# 就把会话整体退回 CPU,所以 main_loop 会拿 AedOnnx.enc_ep 断言,对不上直接不起批。
-ONNX_PROVIDER = (os.environ.get("FIREDASR_ONNX_PROVIDER") or "cpu").strip().lower()
+# 就把会话整体退回 CPU,所以 main_loop 会拿 AedOnnx.enc_ep 断言,对不上直接不起批 ——
+# 也就是说【没有 CUDA EP 的机器现在会当场停】,要在这种机器上跑得显式
+# FIREDASR_ONNX_PROVIDER=cpu。宁可停,也不要"以为在显卡上跑其实是 CPU"。
+ONNX_PROVIDER = (os.environ.get("FIREDASR_ONNX_PROVIDER") or "cuda").strip().lower()
 # 图形状:int8 = 官方量化图(对拍背书,但 CUDA EP 跑不了那些整型算子);
 # mixed = f32 编码器 + int8 解码器(实测最快,也是 cuda 档唯一有意义的选择);
 # f32   = 全逆量化(最占内存)。
@@ -735,9 +747,16 @@ ONNX_PUNC_THREADS = 4
 #      拿真语音段。必须用 --vad-export-raw:不带 -raw 的那份导的是 kind="chunks"
 #      (30 s 网格),不是语音段(10-09 校机实测)。
 #   2) 按语音段拼出【前 15 秒语音】写成临时 wav,再 `-m <ggml-tiny.bin> -dl` 判语种。
-#      为什么切 15 s:whisper 那条判别路径本来就只截原始音频前 15 s
-#      (src/crispasr_lid.cpp:284 kLidMaxSamples = 16000*15),把"原始前 15 s"换成
-#      "语音前 15 s"才是这一步的全部价值。
+#      这一步的价值是把判别器看到的音频从"原始前段"换成"真语音"。
+#      【窗口长度这里先前注释写错了,公开更正】原话是"whisper 那条判别路径本来就只截
+#      原始音频前 15 s",可那个 kLidMaxSamples = 16000*15(src/crispasr_lid.cpp:284)属于
+#      crispasr 的【外部判别器】,也就是批内筛子读的 `crispasr: LID ->` 那一行;闸门读的是
+#      whisper 后端自己的 `auto-detected language:`,10-09 切片实测它吃【前 30 s】——
+#      同一件 66.9 s 素材 head15 → km p=0.410626、head30 → zh p=0.215178、整件 → zh
+#      p=0.215164;另一件 617.8 s 的 head15 → ko p=0.404644、head30 → zh p=0.993594,
+#      而批内筛子给出的正是那两个 15 秒读数(km p=0.411 / ko p=0.405,按 %.3f 逐位对上)。
+#      所以 GATE_LID_SEC=15 是本驱动自己挑的前缀长度、不是上游限制;要不要提到 30 写在
+#      README.md §6.7 的待办里(没实测,不在这儿替它决定)。
 #   正对照(10-09 校机合成件 ctrl_music_intro.wav = 15 s 合成器乐 + 20 s 中文语音,
 #   标准答案 zh;探针 b1009_scan/gate5.py):
 #      原始前 15 s  → en 0.784(错)
@@ -754,7 +773,8 @@ ONNX_PUNC_THREADS = 4
 #       就把整棵树拖去兜底引擎。
 #     · 语种名单沿用 _AED_IN_RANGE,没有另立一套。ONNX 这条 AED 和 crispasr 那个是同一个
 #       模型,覆盖范围一样,而且它【同样不吃语言标记】—— 判到的码只用来挑文件。
-GATE_LID_SEC     = 15.0    # 判别用多长语音(与 crispasr 内部那个 15 s 上限同值)
+GATE_LID_SEC     = 15.0    # 拼多长语音去判别(本驱动自选值;闸门那条 whisper 检测实测吃前 30 s,
+                           # 所以这个数【不是】上游限制 —— 要不要提到 30 见 README.md §6.7)
 GATE_MIN_SPEECH_SEC = 1.0   # 拼不出这么多秒语音就退回对原始文件直接 -dl
 GATE_THREADS     = 2       # 闸门两次 crispasr 调用的 -t
 GATE_TIMEOUT_SEC = 300     # 单步超时:闸门本该一两秒,超这个数就是环境出了问题
@@ -1900,7 +1920,7 @@ def onnx_leg_setup() -> int:
         return 2
     if not os.path.isfile(GATE_VAD_MODEL):
         logger.critical(f"闸门 VAD 模型不存在:{GATE_VAD_MODEL}\n"
-                        f"  闸门没有语音段就只能拿原始前 15 s 去判,静音开头的外语文件会判错")
+                        f"  闸门没有语音段就只能拿原始件去判(那条读前 30 s),静音开头的外语文件会判错")
         return 2
     if not os.path.isfile(CRISPASR_LID_MODEL):
         logger.critical(f"闸门判别模型不存在:{CRISPASR_LID_MODEL}\n"

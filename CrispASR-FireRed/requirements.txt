@@ -17,6 +17,10 @@
 Send2Trash==2.1.0
 
 # ---------- ONNX 主链（PRIMARY_LEG="onnx" 时必需）----------
+# 出厂 provider 已经是 cuda（10-09 从 cpu 改的），所以下面钉的 onnxruntime==1.20.1 那份
+# 【纯 CPU 包】现在只服务两种机器：显式给了 FIREDASR_ONNX_PROVIDER=cpu 的无独显机器，
+# 和只想跑 crispasr 两条腿的人。有 N 卡的机器请按本节最后那段换成 onnxruntime-gpu，
+# 否则会撞在起批前那道 enc_ep 断言上 —— 那是设计好的当场停，不是偷偷退回 CPU 跑完整夜。
 # 与 cpu 分支的 onnx/requirements.txt 同一套 pins，逐字对拍就是在这套上过的
 # （10-06 产线 CPython 3.12.15 + 10-06 干净机 CPython 3.13.11 两轮都跑通）。
 # 版本、为什么钉 1.20.1、punc 的 4-bit 坑，都写在 onnx/requirements.txt 里，那里是单一权威。
@@ -28,7 +32,7 @@ tokenizers==0.23.2
 kaldi-native-fbank==1.22.3
 kaldiio==2.18.1
 
-# ---------- 想用 N 卡（ONNX_PROVIDER="cuda"）时的替换 ----------
+# ---------- N 卡（出厂默认 ONNX_PROVIDER="cuda"）要换的包 ----------
 # 上面钉的 onnxruntime==1.20.1 是【纯 CPU】的包，它没有 CUDA EP，装了 cuda 也只会
 # 在 get_providers() 里露出来（驱动会为此直接抛错停下，不会闷头用 CPU 跑完整夜）。
 # 换成 GPU 包时要同时改三件事，缺一不可：

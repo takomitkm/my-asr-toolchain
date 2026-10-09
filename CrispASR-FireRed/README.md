@@ -62,7 +62,7 @@ crispasr 侧全部是"下载即终件"，ONNX 侧有两件（`punc.f32.onnx`、`
 | `ASR_AUDIO_DIR` | `./audio` | 音频数据面根目录，驱动用它的 `p\` 当输入队列、`f\` 当失败隔离区、`t\` 当 ASCII 暂存区 |
 | `ASR_PRIMARY_LEG` | `onnx` | 主力那一路由谁跑：`onnx` / `crispasr`（见第 6 节） |
 | `FIREDASR_ONNX_MODELS_DIR` | `./onnx/models` | ONNX 三件权重的根目录 |
-| `FIREDASR_ONNX_PROVIDER` | `cpu` | ONNX 的执行提供者：`cpu` / `cuda`。**只有这两个值**，见第 6 节那条"只用 N 卡" |
+| `FIREDASR_ONNX_PROVIDER` | `cuda` | ONNX 的执行提供者：`cpu` / `cuda`。**只有这两个值**，见第 6 节那条"只用 N 卡"。没有 CUDA EP 的机器要显式给 `cpu`，否则起批前当场停 |
 | `FIREDASR_ONNX_GRAPH` | `mixed` | AED 图形状，必须与建权重时 `--graph` 给的那个一致 |
 
 六份 crispasr 侧权重的文件名分别写在 `CRISPASR_MODEL_AED` / `CRISPASR_MODEL_QWEN3` /
@@ -153,12 +153,12 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
 | `CRISPASR_LID_BACKEND` | `"whisper"` | 前置筛子；配合 CONFIG 里 `CRISPASR_LID_MODEL` 那个本地 `ggml-tiny.bin`。每文件判一次。`"onnx"` 档不用它拼转写命令，但 `PRIMARY_LEG="crispasr"` 时仍是主力那一路的筛子 |
 | `BATCH_SIZE` | `28` | 一次调用喂多个 `-f`，模型/VAD 只加载一次 |
 | `PRIMARY_LEG` | `"onnx"` | 主力那一路由谁跑（第 6 节）。改 `"crispasr"` 就回到 10-09 之前的形状 |
-| `ONNX_PROVIDER` | `"cpu"` | ONNX 的执行提供者，**只认 `cpu` / `cuda`**。写别的（DirectML、OpenVINO）驱动直接退出 —— 那两个能挑中 AMD 核显 |
+| `ONNX_PROVIDER` | `"cuda"` | ONNX 的执行提供者，**只认 `cpu` / `cuda`**。写别的（DirectML、OpenVINO）驱动直接退出 —— 那两个能挑中 AMD 核显。出厂值 10-09 从 `cpu` 改成 `cuda`（同一批三件实测 cuda RTF 0.427 对纯 CPU 0.566，§6.6）。**没有 CUDA EP 的机器现在会当场停在起批前那道 `enc_ep` 断言**，要在那种机器上跑得显式给 `FIREDASR_ONNX_PROVIDER=cpu` |
 | `ONNX_GRAPH` | `"mixed"` | f32 编码器 + int8 解码器。10-06 产线实测最快的那档，也是 `cuda` 下唯一有意义的选择（int8 图里那些整型算子 CUDA EP 跑不了） |
 | `ONNX_DEC_ON_GPU` | `False` | 编码器上卡、解码器留 CPU。10-09 在 N 卡上实测：解码器也上卡**更慢**（整批 418.9 s → 537.2 s，+28%），显存倒是放得下（峰值 4,788 MiB / 8,188 MiB）。机制与 crispasr 那边同源结论见 §5.1，数值见 §6.6 |
 | `ONNX_ASR_THREADS` / `ONNX_VAD_THREADS` / `ONNX_PUNC_THREADS` | 逻辑核一半 / ≤8 / 4 | 与 `cpu` 分支那个分发包同口径（10-06 实测并回去的） |
 | `GATE_VAD_MODEL` | `model/ggml-silero-v6.2.0.bin` | 闸门第 1 步 = crispasr `--vad` 的**默认**那个模型（本地路径，不让它联网下） |
-| `GATE_LID_SEC` / `GATE_MIN_SPEECH_SEC` | 15.0 / 1.0 | 判别用 15 s 语音（whisper 那条路径本来就只截 15 s）；拼不出 1 s 语音就退回判原始文件 |
+| `GATE_LID_SEC` / `GATE_MIN_SPEECH_SEC` | 15.0 / 1.0 | 判别用 15 s 语音。**这个 15 不是上游的限制**：闸门读的那行（whisper 自己的检测）实测吃**前 30 s**，而 30 s 那个截断属于 crispasr 的**外部判别器**（`crispasr_lid.cpp:284`，`kLidMaxSamples = 16000*15`）—— 就是批内筛子读的那行。先前本节和驱动注释都写成"whisper 那条路径本来就只截 15 s"，**那是错的，在此公开更正**；窗口实测与后果见 §6.6 末条 |
 | `GATE_THREADS` / `GATE_TIMEOUT_SEC` | 2 / 300 | 闸门两步各是一次短调用，固定 `--gpu-backend cpu`（独显留给主链） |
 
 实测过的数（GPU，4060）：单文件 40 s 量级的中文素材 **RTF ≈ 0.08**。
@@ -342,7 +342,9 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
 
 ### 6.3 只用 N 卡，不碰核显
 
-`ONNX_PROVIDER` 只认 `cpu` | `cuda`，`ep_list()` 对其它值直接退出。理由是**装了什么包不等于
+`ONNX_PROVIDER` 只认 `cpu` | `cuda`（出厂 `cuda`，10-09 从 `cpu` 改的；纯 CPU 的机器要显式
+给 `FIREDASR_ONNX_PROVIDER=cpu`，否则会在起批前那道 `enc_ep` 断言上当场停），`ep_list()`
+对其它值直接退出。理由是**装了什么包不等于
 跑在什么设备上**，三条都是为此：
 
 * **不列 DirectML / OpenVINO**：那两个可以挑中 AMD 核显（这台笔记本的 iGPU 是 Radeon 780M，
@@ -493,19 +495,63 @@ import 干净、`CUDAExecutionProvider` 在列、3.1 GB 的 f32 编码器会话�
   顺带一条**探针自己的坑**（不是驱动的洞）：crispasr 是 ANSI 程序，`-f` 直接给中文名一律
   `error: input file not found`（rc=2，`-dl` 也一样），所以自写探针必须走驱动那套
   `staged_inputs()` 的 ASCII 暂存再去抄命令，否则测出来的"闸门坏了"是假的。
-* **两腿的语种筛子在这批素材上给出不同的路由**（未解释，B 级观察）：同一批三件，ONNX 腿的闸门
-  判 `zh×3`（全进主链，批次 6.1 min、产出 3/3）；crispasr 腿自带的前置筛子判
-  `km p=0.411`（唱歌那件）/ `zh` / `ko p=0.405`（617.78 s 那件）—— 于是 14.0 min 只产出 1/3，
-  两件转 qwen3。两次用的都是同一个 `ggml-tiny.bin` 的 `-dl`，p 都在 0.2~0.4 这个低置信区，
-  差别在喂进去的音频范围与执行后端（闸门那两步固定 `--gpu-backend cpu`、只给 15 s 语音前缀，
-  而 crispasr 内部那条走的是它自己的取段）。这批素材按内容都是中文科技视频，所以 `ko` 那个结论
-  几乎肯定是筛错了，但**我没有真值**（没有人工标注）⇒ 这条只记到"两条腿不一致"，不写"哪边对"。
-  实践上的含义：把主腿换成 ONNX 之后，**有多少文件进主链这件事会变**，不是纯粹的换后端。
+* **两腿的语种筛子判得不一样，原因已经测到底**（这一条替换先前那条"未解释，B 级观察"，
+  并且**更正我写错的两处机制**：老句子里"两次都是 `-dl`"不成立 —— 批内筛子不是 `-dl`；
+  "差别在喂进去的音频范围与执行后端"也只对了一半）：
+  同一批三件，ONNX 腿的闸门判 `zh×3`（全进主链，批次 6.1 min、产出 3/3）；crispasr 腿自带的
+  前置筛子逐件判出 `km p=0.411`（`PPT动画…`）/ `zh`（`[魅族17]…`）/ `ko p=0.405`
+  （`一家卖小米的粗粮公司…`，617.78 s）—— 于是 14.0 min 只产出 1/3，
+  两件转 qwen3。入口是**两条腿读的根本不是同一行**。crispasr 自己的测试矩阵
+  （`tools/test-all-backends.py:1269-1272`）把语种结论的打印形态列成四种，闸门读的是
+  whisper 后端那一行 `auto-detected language: xx (p = …)`，批内筛子读的是框架前置步那一行
+  `crispasr: LID -> language = 'xx' (whisper, p=…)`；后者走 `src/crispasr_lid.cpp`，那里
+  `:284` 把样本写死截成 `16000*15`（**只看原始前 15 秒**），前者实测看的是**前 30 秒**。
+  同一个 `ggml-tiny.bin`，差别只在窗口长度。
+
+  窗口实测（探针 `b1009_lidprobe/probe.py` 一次跑完 P1–P13 + W1–W4，原始读数在同目录
+  `probe_out.txt`；切片由脚本自己 `ffmpeg -t 15 / -t 30` 现截，命令与闸门逐字同形：
+  `-m ggml-tiny.bin -t 2 --gpu-backend cpu -f <ASCII 名> -dl`）：
+
+  | 素材 | 原始前 15 s | 原始前 30 s | 整件 | 批内筛子实际给的 |
+  |---|---|---|---|---|
+  | `PPT动画…`（66.92 s，silero 判 0 段 ⇒ 闸门退回判**原始件**） | `km p=0.410626` | `zh p=0.215178` | `zh p=0.215164` | `km p=0.411` |
+  | `一家卖小米的粗粮公司…`（617.78 s，有语音段 ⇒ 闸门判 15 s 语音前缀） | `ko p=0.404644` | `zh p=0.993594` | 未测 | `ko p=0.405` |
+
+  这两个"对上"不是巧合：筛子读的窗口就是我截的那 15 秒，所以它们该是同一个数（对上时按
+  `%.3f` 舍入：0.410626 → `p=0.411`、0.404644 → `p=0.405`）。结论两句话：
+  **这批 B 站素材的前 15 秒是片头音乐/音效，人声在第 15–30 秒才进来**，所以 15 秒窗口给出
+  km/ko、30 秒窗口给出 zh；而 PPT 那件两条腿判的**都是原始文件**（闸门因为 0 段退回了原始件），
+  它那一处的分歧**只有窗口长度**这一个变量。"30 秒"这个数不是我读到的常数，是从
+  "head30 与整件读数相同到 1e-5、head15 是另一个码"倒推出来的。
+
+* **还有一个更硬的实测：同一个文件在一条命令里可以给出三个不同的码。** `-dl` 加
+  `--strict-pipeline` 时 crispasr 按切片逐段调后端，而 whisper 那个检测是**每次调用重做一遍**，
+  于是 66.92 s 那件一次吐出 `zh 0.215164` / `en 0.459863` / `ko 0.441314`（三个切片各判各的）；
+  换 firered VAD + `-ck 20` 变成 `zh 0.197991` / `en 0.456393` / `en 0.271964`；连跑三次逐字相同
+  （P8 = P11 = P13，是确定性的，不是抖动）。同一条命令里 `-dl` + silero VAD 则**一行都不出**
+  （silero 对这件判 0 段 ⇒ 没有切片 ⇒ 静默，`--strict-pipeline` 下也照样 0 行）。
+  ⇒ "一个文件一个语种"不是 crispasr 承诺的性质，谁把它的判别行当逐文件的唯一结论用，
+  都得先确认自己喂的是哪一种命令形状。
+* **上面那条不影响 `_lid_map` 的对号**：它只匹配 `LID -> language = '…'`
+  （`crisper-xhs-qwen-asr.py:1154`），而这一行 crispasr 每文件只打一次 —— 两处打印点
+  `crispasr_run.cpp:986` 与 `:1003` 由 `probed_ok` 互斥，严格管线那趟在 `:5059` 同样只一次；
+  `auto-detected language:` 那些逐段行根本进不了它的队列，所以"逐段三个码"打不乱顺序对号。
+  g4 实测 3 件出 3 个事件，没触发"整批不采信"。残留风险按机制写在这：真出现"一件两行 `LID ->`"
+  会撞 `len(events) > len(queue)` ⇒ **整批不采信**（失败方位是安全的，等于这次没兜底）；
+  会错配的只有"一部分文件多打、另一部分少打"这种**部分超额**，那种形态到现在一次都没观察到。
+* 实践含义不变，而且更硬：换主腿之后**有多少文件进主链这件事会变**，不是纯换后端。
+  反向也说一句：crispasr 那把只看原始前 15 秒的尺子，会**系统性地把片头音乐当语种证据**，
+  这正是闸门第 1 步（VAD 拼语音前缀）存在的理由；现在多了一条 —— 光拼语音还不够，
+  窗口短到只剩片头照样翻车。`GATE_LID_SEC` 该不该从 15 提到 30 已记进 §6.7（未实测）。
 
 ### 6.7 还没做的事
 
 * `crispasr` 腿在这台笔记本上只量了整腿（g4）和 AED 腿单件的 GPU 占用（g5）；
   **beam 档、qwen3 兜底腿单独的速度都还没在这台机器上量过**。
 * `ONNX_MODE` 仍是 `greedy`：beam 在 ONNX 链里实现了但未调通（慢 9 倍、输出退化）。
+* **`GATE_LID_SEC` 是不是该从 15 提到 30**：闸门读的那条 whisper 检测实测吃前 30 秒（§6.6），
+  而现在只拼 15 秒语音，等于**自废了一半窗口**。低置信那件（`PPT动画…`，判到 zh 但 p 只有
+  0.215）在 30 秒窗口下会拿多少 p，没有实测。代价是确定的：闸门每件判别要多读 15 秒音频，
+  而它已经是每文件 1.1–1.8 s 里的大头。先量再改，别凭机制调。
 * 分语种验证集仍没有（与 `cpu` 分支同一条洞）。
 * Linux 侧只到机制，没有实机跑过。
