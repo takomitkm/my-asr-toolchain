@@ -155,7 +155,7 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
 | `PRIMARY_LEG` | `"onnx"` | 主力那一路由谁跑（第 6 节）。改 `"crispasr"` 就回到 10-09 之前的形状 |
 | `ONNX_PROVIDER` | `"cpu"` | ONNX 的执行提供者，**只认 `cpu` / `cuda`**。写别的（DirectML、OpenVINO）驱动直接退出 —— 那两个能挑中 AMD 核显 |
 | `ONNX_GRAPH` | `"mixed"` | f32 编码器 + int8 解码器。10-06 产线实测最快的那档，也是 `cuda` 下唯一有意义的选择（int8 图里那些整型算子 CUDA EP 跑不了） |
-| `ONNX_DEC_ON_GPU` | `False` | 编码器上卡、解码器留 CPU。三份权重约 4.7 GB 对 8 GB 显存；逐 token 自回归的解码器上卡要在 kernel 派发上亏回去（crispasr 那边同源结论见 §5.1）。**这一条要在 N 卡上自己测出数来再定** |
+| `ONNX_DEC_ON_GPU` | `False` | 编码器上卡、解码器留 CPU。10-09 在 N 卡上实测：解码器也上卡**更慢**（整批 418.9 s → 537.2 s，+28%），显存倒是放得下（峰值 4,788 MiB / 8,188 MiB）。机制与 crispasr 那边同源结论见 §5.1，数值见 §6.6 |
 | `ONNX_ASR_THREADS` / `ONNX_VAD_THREADS` / `ONNX_PUNC_THREADS` | 逻辑核一半 / ≤8 / 4 | 与 `cpu` 分支那个分发包同口径（10-06 实测并回去的） |
 | `GATE_VAD_MODEL` | `model/ggml-silero-v6.2.0.bin` | 闸门第 1 步 = crispasr `--vad` 的**默认**那个模型（本地路径，不让它联网下） |
 | `GATE_LID_SEC` / `GATE_MIN_SPEECH_SEC` | 15.0 / 1.0 | 判别用 15 s 语音（whisper 那条路径本来就只截 15 s）；拼不出 1 s 语音就退回判原始文件 |
@@ -345,8 +345,8 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
 `ONNX_PROVIDER` 只认 `cpu` | `cuda`，`ep_list()` 对其它值直接退出。理由是**装了什么包不等于
 跑在什么设备上**，三条都是为此：
 
-* **不列 DirectML / OpenVINO**：那两个可以挑中 AMD 核显（这台机器的 iGPU 是 680M，
-  集显跑重内核还会整机崩）。ONNX 主链里唯一的 python 侧入口就是这一个常量。
+* **不列 DirectML / OpenVINO**：那两个可以挑中 AMD 核显（这台笔记本的 iGPU 是 Radeon 780M，
+  `Win32_VideoController` 打的型号，10-09 读的；集显跑重内核还会整机崩），ONNX 主链里唯一的 python 侧入口就是这一个常量。
 * **VAD 与 Punc 恒定 CPU**：驱动在建 FireRedVadOnnx 会话时临时替换 `InferenceSession`
   工厂，把 `providers` 钉成 `["CPUExecutionProvider"]`（vendor 的 `infer_onnx.py` 自己没给
   providers，装了 onnxruntime-gpu 时它会自己挑设备），顺带补 `intra_op_num_threads`
@@ -356,10 +356,12 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
   `CUDAExecutionProvider` 就抛错。CUDA/cuDNN 运行库不齐时 ORT 只打一行警告就把整个会话
   退回 CPU，不读实际结果就是"说好用 N 卡、实际在 CPU 上跑一整夜"而没人看得出来。
 
-显存账：f32 编码器 + int8 解码器 + punc 约 4.7 GB，8 GB 档的卡放不下"全部上卡"，
-所以默认 `ONNX_DEC_ON_GPU = False`（编码器上卡、解码器留 CPU）。逐 token 自回归的解码器
-每步都要发一批 kernel launch，crispasr 那边同源结论是 per-token GPU launch 20 ms
-对 CPU 一整步 60 ms；**这条要在 N 卡上自己测出数来再定**，不是引用它的结论。
+显存与解码器上不上卡：默认 `ONNX_DEC_ON_GPU = False`（编码器上卡、解码器留 CPU）。
+10-09 在 N 卡上自己测过（§6.6）：**放不下不是理由** —— 编码器 + int8 解码器都上卡时峰值
+4,788 MiB，8 GB 档放得下（只放编码器是 4,256 MiB）；不让解码器上卡是因为**它上卡更慢**
+（同一批三件素材 wall 418.9 s → 537.2 s，慢 28%）。逐 token 自回归的解码器每步都要发一批
+kernel launch，crispasr 那边同源结论是 per-token GPU launch 20 ms 对 CPU 一整步 60 ms
+（§5.1），两边方向一致。
 
 ### 6.4 为什么"整段无语音"和"判到范围外"处置不同
 
@@ -413,10 +415,97 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
    `{head, tail, k}`。改完 `pyflakes` 在这份文件上只剩 `np` 那四处 —— 那是运行时从链路模块
    取的（`chain_module()` 里 `globals()["np"] = chain.np`），不是漏 import。
 
-### 6.6 还没做的事
+### 6.6 N 卡实机（10-09 已跑完，笔记本 RTX 4060 Laptop）
 
-这一档在 **GPU 上端到端没跑过**（CPU 那条已经跑完，见 §6.5）。上 N 卡之前先单验
-`python -c "import onnxruntime"`：`onnxruntime-gpu` **没有 1.20.1 这个 release**
-（PyPI 404，10-09 查的），所以要用 CUDA 就必须跨到 1.21 以上，而 1.21 起在部分 Windows
-机器上 import 阶段就崩（缺 `vcruntime140_threads.dll`，10-05 在校机实测过那个形态）。
-版本与逐条坑写在 `requirements.txt` 最后那段。
+沙箱 = 作者自己的笔记本：独显 **RTX 4060 Laptop（`nvidia-smi` 报 8,188 MiB）**、核显
+**Radeon 780M**（型号取自 `Win32_VideoController`，10-09 读的 —— 先前本节写的是 680M，
+**那是错的，在此公开更正**）。环境 = 单独一个 venv（CPython 3.13.11，不带系统
+site-packages），里面装 `onnxruntime-gpu==1.30.0`；系统侧是 CUDA toolkit 13.2 加
+System32 里的 `cudnn64_9`。链路代码与三件权重从校机经 sftp 原样搬来，>1 MB 的 8 件
+逐件 sha256 与校机那份对上（`mismatches: 0`）。
+
+跑的件是**桌面那一份驱动**（与仓库这份同代码，只有 CONFIG 里的路径写法和本节这类说明
+文字不同），输入是生产库里三件真素材的**副本**（66.92 + 296.86 + 617.78 = **981.56 s**
+音频），输出与暂存都在沙箱目录，生产树一个字没动。
+
+先单验运行时（`python -c "import onnxruntime"` + 三个会话各建一次）：1.30.0 在这台机器上
+import 干净、`CUDAExecutionProvider` 在列、3.1 GB 的 f32 编码器会话确实落在卡上 ——
+校机 10-05 那个"1.21 以上 import 就崩"的形态**没有复现**，所以那条是"看机器"，不是
+"跨版本就不能用"（`requirements.txt` 最后那段已按这个改）。
+
+四趟，同一份代码只换开关（g3 那份是把 `ONNX_DEC_ON_GPU` 改成 `True` 的副本，其余逐字相同），
+输入是同一批副本：
+
+| 趟 | 腿 | provider | 解码器 | rc | 整批 wall | RTF | 三件逐件用时 | `nvidia-smi` 峰值 |
+|---|---|---|---|---|---|---|---|---|
+| g1 | onnx | cuda | 留 CPU | 0 | **418.9 s** | **0.427** | 17.32 / 80.01 / 244.48 s | util 99%、4,256 MiB |
+| g2 | onnx | cpu | 留 CPU | 0 | 555.4 s | 0.566 | 21.63 / 129.59 / 358.69 s | util 0%、210 MiB |
+| g3 | onnx | cuda | **上卡** | 0 | 537.2 s | 0.547 | 18.98 / 136.67 / 336.26 s | util 100%、4,788 MiB |
+| g4 | crispasr（参照） | `--gpu-backend cuda` | —（它没有这个开关） | 0 | 1084.2 s | 1.105 | AED 段 840 s 只出 1 件 / 兜底段 242 s 出 2 件 | util 峰值 96%、4,104 MiB（**这峰不是 AED 段造成的，见 g5**） |
+| g5 | crispasr AED 腿单件定位 | `--gpu-backend cuda` | — | 0 | 253.4 s | 0.853 | `[魅族17]` 一件 296.86 s | util 中位 **0%**、p95 9%、单点最高 50%；显存恒 1,116 MiB |
+
+* **编码器上卡有效，比纯 CPU 快 1.32 倍**（wall 555.4 → 418.9 s；逐件 1.25×/1.62×/1.47×）。
+  `执行提供者:enc=['CUDAExecutionProvider', 'CPUExecutionProvider'] dec=['CPUExecutionProvider']
+  punc=['CPUExecutionProvider']（VAD 恒定 CPU）` 这一行是驱动自己读的 `get_providers()`，
+  不是推断。装载：VAD 0.1 s + AED 12.6 s + Punc 4.2 s = 17.0 s（整批常驻，一次）。
+* **解码器上卡是负收益**：g3 比 g1 慢 28%，而且三件逐件都慢（1.10×/1.71×/1.38×）。
+  显存反而不是瓶颈 —— 两个都上卡峰值 4,788 MiB，8 GB 档放得下（只放编码器 4,256 MiB）。
+  所以 `ONNX_DEC_ON_GPU` 保持 `False` 的理由是**速度**，先前写"放不下"那条已经改掉（§6.3）。
+  crispasr 那边同源的结论（per-token GPU launch 20 ms 对 CPU 一整步 60 ms）方向一致。
+* **同机整腿对照（g4）**：同一批三件副本走 `PRIMARY_LEG="crispasr"` 是 **1084.2 s（RTF 1.105）**，
+  ONNX 腿是 418.9 s（0.427）⇒ **ONNX 这条腿在这台机器上少 61%**。拆开看这 1084.2 s 花在哪：
+  AED 段 11:46:41→12:00:42 共 **840 s 只产出 1 件**（三件的前置 LID 都在这一段跑，其中两件被判到
+  范围外、扣下不转写），兜底段 12:00:42→12:04:45 共 **242 s 出 2 件**（684.7 s 音频 ⇒ 那一段 RTF 0.354）。
+  口径要讲清：这是**腿对腿**的账（两边都把 3 件输入变成 3 件产出），不是"AED 对 AED"—— g4 里
+  只有 1 件真由 AED 转写，另 2 件是 qwen3。crispasr 每个文件重装模型、批次 `-f` 摊不开那件事
+  （`cpu` 分支 §12 的校机实测）在这台机器上同样成立，而且它这里还多了一层"LID 判完再换引擎重跑"。
+* **g4 那个 util 96%/4,104 MiB 不属于 AED 腿 —— g5 单独定位过**（这是本节的第二条更正：
+  我先前只留峰值、没时间戳，读起来像"AED 腿也在用卡"，和 §6.6 之外那份"显卡整天空闲"的旧读数冲突）。
+  g5 = 只放 g4 里判到 `zh`、确实走了 AED 的那一件（296.86 s），`PRIMARY_LEG="crispasr"`，
+  采样器每 2 s 取一次并记时刻（`gpu1009/rungpu_aed1.py` → `sb2/run/g5_samples.json`）：
+  **120 次采样里 util>5% 只有 6 次**（离散在 t=2.3/61.9/76.8/143/183.4/236.4 s），单点最高 50%、
+  中位 0%、p95 9%，显存全程 1,116 MiB 常驻。⇒ **AED 腿确实只把切片编码器零星丢给卡、解码在 CPU**，
+  那条"整卡 2-6 W、显存占着 1,230 MiB"的旧读数与这次对得上；而 4,104 MiB 只能是 qwen3 兜底段
+  （1.7B q8 权重上卡）留下的。RTF 口径也顺手提一句：g5 单件 253.4 s（0.853）比 g4 里 AED 段的
+  840 s/1 件便宜得多，因为那 840 s 装了**三件**的前置 LID。
+* **换腿会改文本，不只是改速度**（g1 对 g4，尺子＝去空白 + Unicode `P*`/`S*`）：
+  唯一两边都由 AED 转写的那件（`[魅族17]`）**1,454 字 对 1,458 字、相似 0.9657**，逐处差异是
+  近音近形摆动加一类系统性差别 —— **crispasr 保留英文大写（`FLYME`/`NFC`/`IPHONE的X`/`MX`/`OS`），
+  ONNX 这条链出小写并与中文黏住**（`flyme`/`nfc`…，与校机 10-08 那条 B 级观察同向）。
+  另两件在两条腿上根本不是同一个引擎（ONNX 腿判 zh 全进主链；crispasr 腿判 km/ko 转 qwen3），
+  所以只有一处值得记：数字形态 qwen3 给 `2015`/`31`/`220V`/`5C`，ONNX 给"二零一五""二百二十伏"，
+  且 qwen3 会把短句压掉（`sb模块走功率十五瓦` → `SB15W`）。唱歌那件 0.164，不参与判据。
+* **核显一次都没被选中**，判据是机制：`ep_list()` 只给 `cpu`/`cuda`（DirectML、OpenVINO 不列），
+  VAD 会话被钉成 `["CPUExecutionProvider"]`，而 `nvidia-smi` 只看得到 NVIDIA 设备 —— 上面那几个
+  util/显存读数按构造就是 4060 的。g2 是正对照（util 0%、只有 210 MiB 上下文）。核显侧的占用
+  事后没有读数，所以"780M 全程没干活"是**机制推断**，不是仪表证据。
+* **功率那一列不采信**：这台机器的 `nvidia-smi` 里 `power.limit` 是 `[N/A]`，util 同刻 99–100%
+  时 `power.draw` 最大只读到 23–24 W，显然不是真值。
+* **文本层面 GPU 与 CPU 两趟几乎同字**：ONNX 那三趟里两件中文素材**字数完全相同**
+  （1,454 / 3,365），两两相似度 ≥0.9988，逐处差异都是单字级的近音/近形摆动（继↔即、拓↔踏、
+  的↔了、业↔叶、安↔n），没有丢句、没有多出整段。第三件是唱歌素材，两腿都把它编成英文歌词且彼此相距很远
+  （相似 0.10–0.27），这一件不能当 EP 之间的判据 —— §5 第一条说的就是它。
+* **闸门那句"silero 判 0 段"是 silero 的真实判定，不是报错被吞**：三趟日志里
+  `闸门 VAD 失败` 出现 **0** 次；拿同一个文件的 ASCII 名副本单独复跑那条 VAD 调用，段表
+  照常落盘、`kind="vad_segments"`、`num_slices: 0`。同一条素材主链那步 FireRedVAD 出
+  43.16 s 语音 / 5 段 —— 正好是"FireRed 的 voice = 语音 ∪ 唱歌、silero 会把唱歌整段吞掉"
+  在真素材上的一个实例（§5 第一条、§6.4）。
+  顺带一条**探针自己的坑**（不是驱动的洞）：crispasr 是 ANSI 程序，`-f` 直接给中文名一律
+  `error: input file not found`（rc=2，`-dl` 也一样），所以自写探针必须走驱动那套
+  `staged_inputs()` 的 ASCII 暂存再去抄命令，否则测出来的"闸门坏了"是假的。
+* **两腿的语种筛子在这批素材上给出不同的路由**（未解释，B 级观察）：同一批三件，ONNX 腿的闸门
+  判 `zh×3`（全进主链，批次 6.1 min、产出 3/3）；crispasr 腿自带的前置筛子判
+  `km p=0.411`（唱歌那件）/ `zh` / `ko p=0.405`（617.78 s 那件）—— 于是 14.0 min 只产出 1/3，
+  两件转 qwen3。两次用的都是同一个 `ggml-tiny.bin` 的 `-dl`，p 都在 0.2~0.4 这个低置信区，
+  差别在喂进去的音频范围与执行后端（闸门那两步固定 `--gpu-backend cpu`、只给 15 s 语音前缀，
+  而 crispasr 内部那条走的是它自己的取段）。这批素材按内容都是中文科技视频，所以 `ko` 那个结论
+  几乎肯定是筛错了，但**我没有真值**（没有人工标注）⇒ 这条只记到"两条腿不一致"，不写"哪边对"。
+  实践上的含义：把主腿换成 ONNX 之后，**有多少文件进主链这件事会变**，不是纯粹的换后端。
+
+### 6.7 还没做的事
+
+* `crispasr` 腿在这台笔记本上只量了整腿（g4）和 AED 腿单件的 GPU 占用（g5）；
+  **beam 档、qwen3 兜底腿单独的速度都还没在这台机器上量过**。
+* `ONNX_MODE` 仍是 `greedy`：beam 在 ONNX 链里实现了但未调通（慢 9 倍、输出退化）。
+* 分语种验证集仍没有（与 `cpu` 分支同一条洞）。
+* Linux 侧只到机制，没有实机跑过。

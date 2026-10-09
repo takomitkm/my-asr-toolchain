@@ -662,7 +662,11 @@ BATCH_POLL_SEC = 30
 # 为什么值得换(全部是本仓实测,不是推测):
 #   · crispasr 的 AED 后端把【解码器权重恒定放在 CPU】(src/firered_asr.cpp:441-444),
 #     本机 nvidia-smi dmon 连采 18 秒 sm/mem 全 0%、整卡 2-6 W —— 显卡整天空闲,
-#     而它吃 6-7 个 CPU 核。ONNX 这条链把 f32 编码器交给 CUDA EP,是"真能在 N 卡上跑"的那条路。
+#     而它吃 6-7 个 CPU 核。(10-09 用带时刻的 2 秒采样复验过这条:只走 AED 的单件跑
+#     120 个采样点里 util>5% 只有 6 次、中位 0%、显存恒 1,116 MiB —— 见 README.md §6.6 的 g5。)
+#     ONNX 这条链把 f32 编码器交给 CUDA EP,是"真能在 N 卡上跑"的那条路
+#     (10-09 在 4060 Laptop 上端到端实测:同批三件素材 provider=cpu 555.4 s → cuda 418.9 s,
+#      驱动自己读的 get_providers() 里落了 CUDAExecutionProvider,见 README.md §6.6)。
 #   · 10-08 校机纯 CPU 同机同件对拍:单件 29.2 s vs crispasr 贪心 29.4 s(打平),
 #     批次上 ONNX 少 15%~38%。
 #   · 丢字形态不同:crispasr 每个切片解码上限硬顶 150 token(src/firered_asr.cpp:2075,
@@ -708,7 +712,10 @@ ONNX_MODE  = "greedy"          # beam 实现了但未调通(慢 9 倍、输出�
 ONNX_CACHE_LEN = "auto"        # KV cache 预分配:按 8 token/s 估
 # 解码器要不要也上卡。默认不给:f32 解码器是逐 token 自回归,每个 token 都要发一批
 # kernel launch,而 crispasr 那边实测过这笔账(源码注释原话"per-token GPU launches
-# were 20ms each" 对 CPU 一整步 60ms)。这里留一个开关,是为了在本机测出结论而不是引用它。
+# were 20ms each" 对 CPU 一整步 60ms)。这里留一个开关是为了在本机测出结论而不是引用它
+# —— 10-09 在 N 卡(4060 Laptop)上测完了,结论是【上卡更慢】:同一批三件素材(981.6 s 音频)
+# 解码器留 CPU wall 418.9 s、也上卡 537.2 s(+28%,三件逐件都慢),显存峰值 4,256→4,788 MiB
+# (8 GB 档放得下,所以挡人的是速度不是显存)。逐字与出处见 README.md §6.6。
 ONNX_DEC_ON_GPU = False
 
 # ---------- 线程 ----------

@@ -37,10 +37,14 @@ kaldiio==2.18.1
 #   2) 版本只能 >=1.21.0。实测 PyPI 上 onnxruntime-gpu 没有 1.20.1 这个 release
 #      （https://pypi.org/pypi/onnxruntime-gpu/1.20.1/json = HTTP 404，10-09 查的），
 #      所以"和 CPU 侧钉同一个版本号"这条路不存在，只能接受跨版本。
-#   3) CUDA 12 + cuDNN 9 的运行库要能被 onnxruntime_gpu.dll 搜到（它在 wheel 里自带
-#      一部分，剩下的看 NVIDIA 驱动与 PATH）。
-# 已知的坑：1.21 起在部分 Windows 机器上 import 阶段就崩（0xC0000142 / "DLL 初始化
+#   3) CUDA 与 cuDNN 的运行库要能被 onnxruntime_gpu.dll 搜到（wheel 里自带一部分，
+#      剩下的看 NVIDIA 驱动与 PATH）。版本要对得上：10-09 在笔记本 4060 上装进
+#      CPython 3.13.11 的 venv 的是 onnxruntime-gpu==1.30.0，那一条链要 CUDA 13
+#      （本机装的是 toolkit 13.2 + System32 里的 cudnn64_9），import 与建会话都干净，
+#      `enc_ep` 里确实落了 CUDAExecutionProvider。
+# 已知的坑：1.21 起在【部分】Windows 机器上 import 阶段就崩（0xC0000142 / "DLL 初始化
 # 例程失败"），根因是 System32 的 VC 运行库太旧、缺 vcruntime140_threads.dll ——
-# 那是【校机】10-05 实测的形态。换卡跑之前先 pip show onnxruntime-gpu 再
+# 那是【校机】10-05 实测的形态；10-09 在笔记本上装 1.30.0 没有复现，所以这条是
+# "看机器"而不是"1.21 以上都不能用"。换卡跑之前先 pip show onnxruntime-gpu 再
 # python -c "import onnxruntime" 单独验一次，别把它留给批次去撞。
 # 这条链【不列】DirectML / OpenVINO：那两个能挑中 AMD 核显，而驱动只允许 CPU 或 N 卡。
