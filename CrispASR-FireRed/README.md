@@ -11,7 +11,7 @@ qwen 指兜底那台引擎，主力一直是 FireRed 那套）。
 | `"crispasr"` | CrispASR 的 `firered-asr` backend（同一模型 AED 的 gguf q4_k 量化件，CUDA） | crispasr 自己的 `--lid-backend whisper` 筛子（判到范围外照样换 qwen3） |
 
 两档共用同一份兜底：判到 AED 语种范围外 → 这批文件立刻用 `qwen3` 重跑（同一批内完成）。
-换档不改任何其它参数，那 8 行 crispasr 代码一行没删。
+换档不改任何其它参数，crispasr 那两条腿（批量 `_crispasr_batch` 与逐文件那趟）的代码一行没删。
 
 形状没变的部分：AED 出**无标点**的字、标点由 `fireredpunc` 加（`"onnx"` 档是 ONNX 图的
 FireRedPunc、`"crispasr"` 档是 gguf 那份），VAD 用 `firered-vad`（`"onnx"` 档用它的 ONNX 图）。
