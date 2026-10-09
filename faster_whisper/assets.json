@@ -1,6 +1,6 @@
 {
  "engine": "faster-whisper / large-v3（CUDA）",
- "driver": "whisper-batch10.py",
+ "driver": "Wg-large.py",
  "branch": "gpu",
  "note": "whisper 这一套是四台机器里最老、最轻的一条：一个 ct2 模型目录 + pip 包就能跑，VAD 与标点都靠 faster-whisper 自己。",
  "roots": {

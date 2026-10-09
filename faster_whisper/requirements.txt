@@ -1,4 +1,4 @@
-# whisper-batch10.py 用到两件第三方库：faster_whisper（第 8 行）和 send2trash（第 7 行），
+# Wg-large.py 用到两件第三方库：faster_whisper（第 8 行）和 send2trash（第 7 行），
 # 其余全是标准库。装 faster-whisper 会自动带进 ctranslate2 / av / tokenizers /
 # huggingface_hub / onnxruntime，所以下面把它们分成"直接依赖"和"实测在位的传递依赖"两档。
 #

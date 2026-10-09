@@ -3,7 +3,7 @@
 # 这一环在链路里的位置：AED 出原始文本 -> 去空行/逐行 strip -> 复读折叠
 # （remove_repetitions：短串重复 6 次以上、长串重复 4 次以上折成一次，再加相邻重复行去重）
 # -> 本文件的规则逐条 re.sub -> 写进 <out-dir>\<组名>.txt。
-# 规则文件不存在时不清洗、不报错（xhs-chain-cpu.py load_rules 只写一行 info）。
+# 规则文件不存在时不清洗、不报错（Oc-fired.py load_rules 只写一行 info）。
 #
 # 格式（照 load_rules 的实现写，别照别家的规则文件猜）：
 #   · 每行一条，第一个 "=" 左边是正则、右边是替换；替换取 "=" 右侧全部再 strip。

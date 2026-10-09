@@ -1,6 +1,6 @@
 {
  "engine": "CrispASR / firered-asr（CUDA）+ FireRedASR2S ONNX 全链路",
- "driver": "crisper-xhs-qwen-asr.py",
+ "driver": "Wlid-Og-fired-Cg-qwen.py",
  "branch": "gpu",
  "note": "主引擎 FireRedASR2-AED + 兜底 qwen3 的双引擎驱动。10-09 起主力那一路默认换成本包 onnx/ 里的 FireRedASR2S ONNX 全链路（FireRedVAD→AED→FireRedPunc，纯 onnxruntime，三个会话进程内常驻），先由 crispasr 的默认 silero VAD + whisper-tiny 判语种，判到 AED 范围外才用 qwen3；所以 crispasr 那件程序、qwen3 权重、判别模型和闸门 VAD 都是必须组件。想退回改前的行为：把驱动顶部 PRIMARY_LEG 改成 \"crispasr\"（crispasr 那两条腿 _crispasr_batch 与逐文件那趟的代码一行没删）。",
  "onnx_chain": {

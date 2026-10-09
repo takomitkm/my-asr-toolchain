@@ -1,4 +1,4 @@
-# 跑 crisper-xhs-qwen-asr.py 的第三方库。分两层，因为驱动现在有两段代码：
+# 跑 Wlid-Og-fired-Cg-qwen.py 的第三方库。分两层，因为驱动现在有两段代码：
 # crispasr.exe 那两条腿（python 侧只负责拼命令行、读 stderr），和本包 onnx/ 里的
 # FireRedASR2S ONNX 全链路（python 侧就是推理本身）。
 #

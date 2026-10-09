@@ -67,7 +67,7 @@ def resolve_dir(env_name, default_rel):
 #
 # 迁到没有显卡的机器:CRISPASR_BIN_DIR 指到 crispasr-windows-x86_64-cpu(-legacy) 的
 # 解压目录、CRISPASR_GPU_BACKEND 改成 "cpu"、CRISPASR_THREADS 给到逻辑线程数的 0.75 倍
-# (本机 CPU 扫点:16 逻辑 → 12 最快,RTF 0.59;详见 crispasr-Qwen-cpu.py 的线程数一节);
+# (本机 CPU 扫点:16 逻辑 → 12 最快,RTF 0.59;详见 Cc-qwen.py 的线程数一节);
 # 模型文件一个都不用重下(这套 CUDA 目录里已经有 ggml-cpu.dll)。
 # 纯 CPU 包里不带 ggml-*.dll(静态链进 exe),但 crispasr.exe 必须和 openblas.dll 同目录。
 
@@ -109,8 +109,8 @@ CRISPASR_LID_MODEL = os.path.join(MODEL_DIR, "ggml-tiny.bin")
 # 差异只在断句与标点,没有内容进出。n=1,B 级。
 # 【已知洞:v6 对唱歌素材判 0 段、整条静默丢弃】(一条 60 s 日推歌曲副歌:rc 仍 0、
 # 不落 .txt;v5 捡回 59 字,firered 出 97 字真歌词)⇒ "口语打平"不等于"全语料打平"。
-# 这份仍留 silero;完整账与 firered 的代价见 crisper-xhs-qwen-asr.py 的 CONFIG · VAD,无语音文件的
-# 记账(no_speech.txt)由 crisper-xhs-qwen-asr.py 和 crispasr-Qwen-cpu.py 两份负责,这份不改逻辑。
+# 这份仍留 silero;完整账与 firered 的代价见 Wlid-Og-fired-Cg-qwen.py 的 CONFIG · VAD,无语音文件的
+# 记账(no_speech.txt)由 Wlid-Og-fired-Cg-qwen.py 和 Cc-qwen.py 两份负责,这份不改逻辑。
 CRISPASR_VAD_MODEL = os.path.join(MODEL_DIR, "ggml-silero-v6.2.0.bin")
 
 # ==================== CONFIG · CrispASR ====================
@@ -177,7 +177,7 @@ CRISPASR_THREADS     = 6
 #
 # (8) 判别结果在生产日志里看不见:`crispasr[lid]: detected 'xx' (p=…)` 这行受
 #     opts.verbose = !params.no_prints 控制,而命令行带 --no-prints,所以是静默生效的。
-#     现在 -l auto 已经默认开,想看见码就照无显卡副本(crispasr-Qwen-cpu.py)的做法加
+#     现在 -l auto 已经默认开,想看见码就照无显卡副本(Cc-qwen.py)的做法加
 #     LID_VERBOSE 常量并在 _base_cmd 里条件化 --no-prints —— 本脚本没动这块,因为它正
 #     在跑生产,少改一处少一分风险。
 #     两条与 auto 直接相关的源码事实(A 级,本仓库 0.8.37):
@@ -1013,10 +1013,10 @@ def main_loop() -> int:
 # 写死了 python.exe 的绝对路径、PowerShell 调用和反斜杠,换机器或迁 Linux 都得重
 # 写一遍;收进本文件后启动方式和配置在同一处,Windows / POSIX 各走各的进程分离参数。
 #
-#   python crispasr-Qwen.py            前台跑(关窗口即断,但 Job Object 会连带杀掉
+#   python Cg-qwen.py            前台跑(关窗口即断,但 Job Object 会连带杀掉
 #                                      crispasr.exe,不会留孤儿占显存)
-#   python crispasr-Qwen.py --start    后台跑,控制台输出重定向到 txt\log\console_*.log
-#   python crispasr-Qwen.py --stop     建 STOP 标志,实例在下一批边界优雅退出
+#   python Cg-qwen.py --start    后台跑,控制台输出重定向到 txt\log\console_*.log
+#   python Cg-qwen.py --stop     建 STOP 标志,实例在下一批边界优雅退出
 #
 # --start 先抢一次锁再放掉,只为把"已经有实例在跑"报在当场,而不是让后台子进程
 # 静默起一个然后自己退掉。真正防并发仍靠子进程里的那次 acquire_lock。
@@ -1065,7 +1065,7 @@ def cmd_stop() -> int:
 
 if __name__ == "__main__":
     _arg = (sys.argv[1] if len(sys.argv) > 1 else "").lower()
-    _USAGE = ("用法: python crispasr-Qwen.py [--start | --stop]\n"
+    _USAGE = ("用法: python Cg-qwen.py [--start | --stop]\n"
               "  (无参数)  前台转写整个队列\n"
               "  --start   后台转写(控制台输出 -> txt\\log\\console_*.log)\n"
               "  --stop    让在跑的实例在下一批边界退出\n")

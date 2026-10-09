@@ -1,7 +1,9 @@
 # CrispASR-FireRed —— FireRedASR2S 全链路（ONNX，可上 N 卡）+ qwen3 兜底的批转链
 
-驱动是 `crisper-xhs-qwen-asr.py`（10-08 前的旧名是 `xhs-asr.py`，两份是同一个文件；名字里的
-qwen 指兜底那台引擎，主力一直是 FireRed 那套）。
+驱动是 `Wlid-Og-fired-Cg-qwen.py`（旧名 `Wlid-Og-fired-Cg-qwen.py`，10-08 前还叫 `xhs-asr.py`，
+三份是同一个文件）。名字按仓库根 README 的记号法拆读：`Wlid` = whisper-tiny 先判语种、
+`Og-fired` = 判到范围内就走 FireRedASR2S 的 ONNX 全链（N 卡）、`Cg-qwen` = 判到范围外回退
+crispasr 的 qwen3（N 卡）；主力一直是 FireRed 那套。
 
 **10-09 起这条链有两段实现，由驱动顶部一个常量挑：**
 
@@ -74,9 +76,9 @@ crispasr 侧全部是"下载即终件"，ONNX 侧有两件（`punc.f32.onnx`、`
 ## 2. 跑
 
 ```bat
-.venv\Scripts\python crisper-xhs-qwen-asr.py --start   :: 分离后台启动
-.venv\Scripts\python crisper-xhs-qwen-asr.py --stop     :: 写 STOP 标志，下一批边界干净退出
-.venv\Scripts\python crisper-xhs-qwen-asr.py            :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
+.venv\Scripts\python Wlid-Og-fired-Cg-qwen.py --start   :: 分离后台启动
+.venv\Scripts\python Wlid-Og-fired-Cg-qwen.py --stop     :: 写 STOP 标志，下一批边界干净退出
+.venv\Scripts\python Wlid-Og-fired-Cg-qwen.py            :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
 ```
 
 **关掉启动它的那个控制台 = 连坐杀 crispasr 子进程**（Job Object 是故意绑上去的，
@@ -158,7 +160,7 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
 | `ONNX_DEC_ON_GPU` | `False` | 编码器上卡、解码器留 CPU。10-09 在 N 卡上实测：解码器也上卡**更慢**（整批 418.9 s → 537.2 s，+28%），显存倒是放得下（峰值 4,788 MiB / 8,188 MiB）。机制与 crispasr 那边同源结论见 §5.1，数值见 §6.6 |
 | `ONNX_ASR_THREADS` / `ONNX_VAD_THREADS` / `ONNX_PUNC_THREADS` | 逻辑核一半 / ≤8 / 4 | 与 `cpu` 分支那个分发包同口径（10-06 实测并回去的） |
 | `GATE_VAD_MODEL` | `model/ggml-silero-v6.2.0.bin` | 闸门第 1 步 = crispasr `--vad` 的**默认**那个模型（本地路径，不让它联网下） |
-| `GATE_LID_SEC` / `GATE_MIN_SPEECH_SEC` | 15.0 / 1.0 | 判别用 15 s 语音。**这个 15 不是上游的限制**：闸门读的那行（whisper 自己的检测）实测吃**前 30 s**，而 30 s 那个截断属于 crispasr 的**外部判别器**（`crispasr_lid.cpp:284`，`kLidMaxSamples = 16000*15`）—— 就是批内筛子读的那行。先前本节和驱动注释都写成"whisper 那条路径本来就只截 15 s"，**那是错的，在此公开更正**；窗口实测与后果见 §6.6 末条 |
+| `GATE_LID_SEC` / `GATE_MIN_SPEECH_SEC` | 15.0 / 1.0 | 判别用 15 s 语音。**这个 15 不是上游的限制**：闸门读的那行（whisper 自己的检测）实测吃**前 30 s**，而 30 s 那个截断属于 crispasr 的**外部判别器**（`crispasr_lid.cpp:284`，`kLidMaxSamples = 16000*15`）—— 就是批内筛子读的那行。先前本节和驱动注释都写成"whisper 那条路径本来就只截 15 s"，**那是错的，在此公开更正**；窗口实测与后果见 §6.6 末条。**10-10 她已定：保持 15，不提到 30**（§6.7） |
 | `GATE_THREADS` / `GATE_TIMEOUT_SEC` | 2 / 300 | 闸门两步各是一次短调用，固定 `--gpu-backend cpu`（独显留给主链） |
 
 实测过的数（GPU，4060）：单文件 40 s 量级的中文素材 **RTF ≈ 0.08**。
@@ -272,7 +274,7 @@ I/O 契约（与 `CrispASR-Qwen/`、`cpu` 分支那两份逐条相同）：
   （`:1153 → :1251` 把 0 原样传进 `crispasr_compute_audio_slices`）。所以这条链上"传不传 `-ck`"
   是内容完整性参数，不是速度参数；上游对同一件事的措辞见 `CrispASR-Qwen/README.md` §4.1 ④ 引的
   `HISTORY.md:6210-6216`。
-* 本包的处置：`crisper-xhs-qwen-asr.py` 的 `VAD_MAX_SEGMENT_SEC` 由 30 改成 **20**。
+* 本包的处置：`Wlid-Og-fired-Cg-qwen.py` 的 `VAD_MAX_SEGMENT_SEC` 由 30 改成 **20**。
 * 这个坑**只咬 AED**：qwen3 那条解码预算是 `max_new_tokens`（默认 512，`-n` 能改），
   30 s 档离顶还有 2~3 倍，所以 `CrispASR-Qwen/` 与 `cpu` 分支 `Qwen3/` 的 30 没动 ——
   推导与复核方法记在 `../CrispASR-Qwen/README.md`。
@@ -533,25 +535,36 @@ import 干净、`CUDAExecutionProvider` 在列、3.1 GB 的 f32 编码器会话�
   ⇒ "一个文件一个语种"不是 crispasr 承诺的性质，谁把它的判别行当逐文件的唯一结论用，
   都得先确认自己喂的是哪一种命令形状。
 * **上面那条不影响 `_lid_map` 的对号**：它只匹配 `LID -> language = '…'`
-  （`crisper-xhs-qwen-asr.py:1154`），而这一行 crispasr 每文件只打一次 —— 两处打印点
+  （`Wlid-Og-fired-Cg-qwen.py:1175`），而这一行 crispasr 每文件只打一次 —— 两处打印点
   `crispasr_run.cpp:986` 与 `:1003` 由 `probed_ok` 互斥，严格管线那趟在 `:5059` 同样只一次；
   `auto-detected language:` 那些逐段行根本进不了它的队列，所以"逐段三个码"打不乱顺序对号。
   g4 实测 3 件出 3 个事件，没触发"整批不采信"。残留风险按机制写在这：真出现"一件两行 `LID ->`"
   会撞 `len(events) > len(queue)` ⇒ **整批不采信**（失败方位是安全的，等于这次没兜底）；
   会错配的只有"一部分文件多打、另一部分少打"这种**部分超额**，那种形态到现在一次都没观察到。
+* **小红书那把 VAD 认不认得出片头是音乐？** 10-10 补测（探针 `_tmp_toolchain/b1009_vadseg/vadseg.py`，
+  只跑链里 VAD 那一环，会话在链里恒定 CPU；读数同目录 `vadseg_lidprobe.txt`）：同一条 66.92 s 素材，
+  **FireRedVAD 出 5 段、语音合计 43.16 s** —— 与 g1 批次日志那句"音频 66.92s / 语音 43.16s / 5 段"
+  逐字对上，所以探针量的就是链里那一把。段表（秒）：
+  `4.28–5.17` / `16.74–19.07` / `26.96–40.78` / `40.79–58.94` / `58.95–66.92`。
+  ⇒ **前 15 秒里它只留下 0.89 秒**（4.28–5.17），另外 14.11 秒判成非语音：**片头是音乐这件事
+  FireRedVAD 基本认得出来**；在这件素材上判 0 段的是闸门用的那把 silero v6（§6.5），不是小红书自家那把。
+  留下的那 0.89 秒是什么内容没核（要起一次 AED 会话才看得见，约 3.4 GB / 十几秒加载，标 B）。
+  机制后果顺带记一句：silero 判 0 段 ⇒ 闸门拼不出语音前缀、只能退回判原始件；换成 FireRedVAD 那把的话，
+  15 秒语音前缀会从 16.74 s 起拼（跳过片头）。**这条只写两个读数的关系，不等于要换** ——
+  闸门用 silero 是她 10-09 定的（"先用默认的 silero vad"），换不换由她再定。
 * 实践含义不变，而且更硬：换主腿之后**有多少文件进主链这件事会变**，不是纯换后端。
   反向也说一句：crispasr 那把只看原始前 15 秒的尺子，会**系统性地把片头音乐当语种证据**，
   这正是闸门第 1 步（VAD 拼语音前缀）存在的理由；现在多了一条 —— 光拼语音还不够，
-  窗口短到只剩片头照样翻车。`GATE_LID_SEC` 该不该从 15 提到 30 已记进 §6.7（未实测）。
+  窗口短到只剩片头照样翻车。`GATE_LID_SEC` 提到 30 这条**她 10-10 已定：不调，保持 15**（§6.7）。
 
 ### 6.7 还没做的事
 
 * `crispasr` 腿在这台笔记本上只量了整腿（g4）和 AED 腿单件的 GPU 占用（g5）；
   **beam 档、qwen3 兜底腿单独的速度都还没在这台机器上量过**。
 * `ONNX_MODE` 仍是 `greedy`：beam 在 ONNX 链里实现了但未调通（慢 9 倍、输出退化）。
-* **`GATE_LID_SEC` 是不是该从 15 提到 30**：闸门读的那条 whisper 检测实测吃前 30 秒（§6.6），
-  而现在只拼 15 秒语音，等于**自废了一半窗口**。低置信那件（`PPT动画…`，判到 zh 但 p 只有
-  0.215）在 30 秒窗口下会拿多少 p，没有实测。代价是确定的：闸门每件判别要多读 15 秒音频，
-  而它已经是每文件 1.1–1.8 s 里的大头。先量再改，别凭机制调。
+* ~~`GATE_LID_SEC` 是不是该从 15 提到 30~~ —— **10-10 她已定：不调整，保持 15。这条已收口，
+  别再重开。** 记录一下当时的问题位（不重做、只留档）：闸门读的那条 whisper 检测实测吃前 30 秒
+  （§6.6），所以拼 15 秒语音并没有把这个窗口用满；提上去的代价是确定的（每件判别要多读 15 秒
+  音频，而闸门已经是每文件 1.1–1.8 s 里的大头），收益没有实测。
 * 分语种验证集仍没有（与 `cpu` 分支同一条洞）。
 * Linux 侧只到机制，没有实机跑过。

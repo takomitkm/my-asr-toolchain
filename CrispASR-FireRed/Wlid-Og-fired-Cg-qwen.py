@@ -1,8 +1,9 @@
 r"""
-CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底,由 crispasr-Qwen.py 复制而来
-(10-08 起改用本名,旧名 xhs-asr.py;名字里的 qwen 指兜底那台引擎,主引擎仍是 FireRed AED)
+CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底,由 Cg-qwen.py 复制而来
+(本名按仓库根 README 的记号法拆:Wlid 判语种 -> Og-fired 主链 -> Cg-qwen 兜底;
+ 旧名 Wlid-Og-fired-Cg-qwen.py,10-08 前还叫 xhs-asr.py,三份是同一个文件)
 
-本文件与 crispasr-Qwen.py 的差异在引擎组合、VAD、标点、语种处理和"换引擎"这件事由谁
+本文件与 Cg-qwen.py 的差异在引擎组合、VAD、标点、语种处理和"换引擎"这件事由谁
 来做这几处;队列、硬链接暂存、批内结算、单实例锁、Job Object、通知全部原样沿用。
 
   · 主引擎 FireRedASR2-AED(小红书 FireRedTeam,Conformer 编码器 + 注意力解码器,
@@ -60,7 +61,7 @@ CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底
     (crispasr_chunk_context_gate.h:36-39)。注意别记串:同一段注释里"每个接缝都把文本
     重复解一遍、并把贪心解码推进复读循环"是 moss-transcribe 与 canary-qwen 的失效形态
     (#218),不是 qwen3 的。
-    由此对她旧脚本 crispasr-Qwen.py 的结论:--vad 与 kBlocked 两道闸门【都已经挡着】
+    由此对她旧脚本 Cg-qwen.py 的结论:--vad 与 kBlocked 两道闸门【都已经挡着】
     overlap-save(她的命令里没有 --chunk-overlap 也没有 --lcs-dedup),所以旧脚本这条
     路不需要为这个坑改任何参数;把 VAD 阈值调高或干脆去掉 --vad 反而是倒退 —— 去掉
     --vad 就同时丢了 crispasr_rechunk_slices() 的按能量极小点切分。
@@ -81,9 +82,9 @@ CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底
     模型、判别模型逐个 os.path.isfile 校验,缺哪个报哪个(全部字面路径集中在文件顶部
     CONFIG · 外部资源 那一段)。
 
-用法不变:python crisper-xhs-qwen-asr.py 前台跑 / --start 后台跑 / --stop 优雅停止。
+用法不变:python Wlid-Og-fired-Cg-qwen.py 前台跑 / --start 后台跑 / --stop 优雅停止。
 
-以下驱动行为原样继承 crispasr-Qwen.py(对比最早那版逐文件调用 crispasr 的脚本):
+以下驱动行为原样继承 Cg-qwen.py(对比最早那版逐文件调用 crispasr 的脚本):
   · 一次 crispasr.exe 调用喂多个 -f,模型 / VAD 只加载一次(旧版每文件重载 1.7B 权重)
   · 批量调用失败或有文件未产出时,自动对这些文件逐个重跑以精确定位坏文件
   · 子进程通过 Windows Job Object 绑定本进程:关窗口 / 强杀 python,crispasr.exe 一并终止
@@ -181,7 +182,7 @@ CRISPASR_LID_MODEL = os.path.join(MODEL_DIR, "ggml-tiny.bin")
 # VAD 权重 = FireRedVAD(小红书自家,voice 含唱歌)。firered-vad.gguf,2,357,952 B。
 # 选它是因为 silero v6.2.0 对唱歌素材判 0 段 → 整条静默丢弃(无 .txt、rc 仍为 0),
 # v5.1.2 只捡回 59 字,firered 出 97 字真歌词。详细数据与代价见 CONFIG · VAD。
-# 另两份脚本(crispasr-Qwen.py / crispasr-Qwen-cpu.py)用 silero v6.2.0。
+# 另两份脚本(Cg-qwen.py / Cc-qwen.py)用 silero v6.2.0。
 CRISPASR_VAD_MODEL = os.path.join(MODEL_DIR, "firered-vad.gguf")
 # 语种闸门用的 VAD = silero v6.2.0(885,098 B),就是 crispasr 不加 -vm 时自己去
 # huggingface.co/ggml-org/whisper-vad 下的那一份。【只有闸门读它】,转写本身仍用上面
@@ -220,7 +221,7 @@ EXTENSIONS = {".mp3", ".m4a", ".mp4", ".wav", ".oga", ".ogg", ".opus", ".flac", 
 #   主引擎  aed    —— 默认所有文件都走它
 #   兜底    qwen3  —— 只接前置筛子(CRISPASR_LID_BACKEND = whisper)判到 AED 范围外的文件
 #
-# 换引擎这件事以前是"她自己切回 crispasr-Qwen.py 手工跑",现在由本脚本在同一批里自动
+# 换引擎这件事以前是"她自己切回 Cg-qwen.py 手工跑",现在由本脚本在同一批里自动
 # 完成:判到范围外的文件【不落盘】,攒下来立刻用 qwen3 重跑一遍(见 process_batch)。
 # 兜底那趟仍然是 `-l auto` + whisper 前置判别 —— 不是图省事,是因为 qwen3 的 -l 是真生效
 # 的(被拼成一条 assistant 前缀),而"把驱动判到的码再传一次"会把筛子的错误固化;
@@ -436,7 +437,7 @@ CRISPASR_THREADS     = 6
 # = "我不替模型决定语种"。
 # 覆盖范围只有 中文(+约20方言) / 英语 / 粤语。超出这个范围不是"差一点",是拿汉字
 # 编造(issue #199),这一层任何 CLI 参数都救不了 —— 非中英语种必须换引擎,换引擎就
-# 用 crispasr-Qwen.py,本副本不做这件事。
+# 用 Cg-qwen.py,本副本不做这件事。
 #
 # 下面 (1)-(8) 是【qwen3 上】的实测(基准树是作者的本地 lid 基准目录,不在本包里;45 s 组见
 # labels.tsv / results.tsv,120 s 组见 v3_results.tsv 与 out/v3_*.txt,逐字文本都在,
@@ -595,7 +596,7 @@ def _lid_is_off() -> bool:
 # 反而从 7 段变 13 段 —— 阈值升高段数变多,和"越高越严"不一致,语义与文档不符,没搞清前别调。
 #
 # 版本说明:上游不带 -vm 的默认是 silero v6.2.0(examples/cli/crispasr_vad_cli.cpp:19-20),
-# crispasr-Qwen.py 与 crispasr-Qwen-cpu.py 就用那份;两份 silero 都是 885,098 B 但 md5 不同
+# Cg-qwen.py 与 Cc-qwen.py 就用那份;两份 silero 都是 885,098 B 但 md5 不同
 # (c8f28919… / ee99234b…)。whisper-vad-asmr-q4_k.gguf(日语 ASMR 专用判别式 VAD)本机没有。
 # --vad 要留:不加它走固定 30 s 分块,qwen3 在块边界上有已证的截断形态(overlap-save 裁掉
 # 词级时间戳,见 CONFIG · 引擎里 kBlocked 那条);--vad 还接 crispasr_rechunk_slices() 的
@@ -755,8 +756,8 @@ ONNX_PUNC_THREADS = 4
 #      同一件 66.9 s 素材 head15 → km p=0.410626、head30 → zh p=0.215178、整件 → zh
 #      p=0.215164;另一件 617.8 s 的 head15 → ko p=0.404644、head30 → zh p=0.993594,
 #      而批内筛子给出的正是那两个 15 秒读数(km p=0.411 / ko p=0.405,按 %.3f 逐位对上)。
-#      所以 GATE_LID_SEC=15 是本驱动自己挑的前缀长度、不是上游限制;要不要提到 30 写在
-#      README.md §6.7 的待办里(没实测,不在这儿替它决定)。
+#      所以 GATE_LID_SEC=15 是本驱动自己挑的前缀长度、不是上游限制。要不要提到 30 这条
+#      10-10 她已定:不调整,保持 15(已收口,见 README.md §6.7),别再拿这个数做文章。
 #   正对照(10-09 校机合成件 ctrl_music_intro.wav = 15 s 合成器乐 + 20 s 中文语音,
 #   标准答案 zh;探针 b1009_scan/gate5.py):
 #      原始前 15 s  → en 0.784(错)
@@ -773,8 +774,8 @@ ONNX_PUNC_THREADS = 4
 #       就把整棵树拖去兜底引擎。
 #     · 语种名单沿用 _AED_IN_RANGE,没有另立一套。ONNX 这条 AED 和 crispasr 那个是同一个
 #       模型,覆盖范围一样,而且它【同样不吃语言标记】—— 判到的码只用来挑文件。
-GATE_LID_SEC     = 15.0    # 拼多长语音去判别(本驱动自选值;闸门那条 whisper 检测实测吃前 30 s,
-                           # 所以这个数【不是】上游限制 —— 要不要提到 30 见 README.md §6.7)
+GATE_LID_SEC     = 15.0    # 拼多长语音去判别(本驱动自选值,不是上游限制;她 10-10 已定保持 15,
+                           # 不提到 30 —— 闸门那条 whisper 检测实测吃前 30 s 这件事只留档不做文章)
 GATE_MIN_SPEECH_SEC = 1.0   # 拼不出这么多秒语音就退回对原始文件直接 -dl
 GATE_THREADS     = 2       # 闸门两次 crispasr 调用的 -t
 GATE_TIMEOUT_SEC = 300     # 单步超时:闸门本该一两秒,超这个数就是环境出了问题
@@ -1797,7 +1798,7 @@ def chain_module():
 class OnnxChain:
     """FireRedASR2S ONNX 全链路在本进程常驻一份:FireRedVAD → AED → FireRedPunc。
 
-    与 cpu 分支那个独立驱动(xhs-chain-cpu.py 的 Engine)同一口径,两点值得记:
+    与 cpu 分支那个独立驱动(Oc-fired.py 的 Engine)同一口径,两点值得记:
       · VAD 不走"临时 wav 往返" —— 链路自带的 run_vad 会 sf.write 到 %TEMP%\\_chain_vad.wav
         再读回来,与生产批次同名的话会互相踩,这里改成内存直喂;
       · float→int16 用 rint,与 PCM_16 落盘的舍入口径一致,免得换条路就换了量化误差。
@@ -2344,10 +2345,10 @@ def main_loop() -> int:
 # 写死了 python.exe 的绝对路径、PowerShell 调用和反斜杠,换机器或迁 Linux 都得重
 # 写一遍;收进本文件后启动方式和配置在同一处,Windows / POSIX 各走各的进程分离参数。
 #
-#   python crisper-xhs-qwen-asr.py                前台跑(关窗口即断,但 Job Object 会连带杀掉
+#   python Wlid-Og-fired-Cg-qwen.py                前台跑(关窗口即断,但 Job Object 会连带杀掉
 #                                      crispasr.exe,不会留孤儿占显存)
-#   python crisper-xhs-qwen-asr.py --start    后台跑,控制台输出重定向到 txt\log\console_*.log
-#   python crisper-xhs-qwen-asr.py --stop     建 STOP 标志,实例在下一批边界优雅退出
+#   python Wlid-Og-fired-Cg-qwen.py --start    后台跑,控制台输出重定向到 txt\log\console_*.log
+#   python Wlid-Og-fired-Cg-qwen.py --stop     建 STOP 标志,实例在下一批边界优雅退出
 #
 # --start 先抢一次锁再放掉,只为把"已经有实例在跑"报在当场,而不是让后台子进程
 # 静默起一个然后自己退掉。真正防并发仍靠子进程里的那次 acquire_lock。
@@ -2396,7 +2397,7 @@ def cmd_stop() -> int:
 
 if __name__ == "__main__":
     _arg = (sys.argv[1] if len(sys.argv) > 1 else "").lower()
-    _USAGE = ("用法: python crisper-xhs-qwen-asr.py [--start | --stop]\n"
+    _USAGE = ("用法: python Wlid-Og-fired-Cg-qwen.py [--start | --stop]\n"
               "  (无参数)  前台转写整个队列\n"
               "  --start   后台转写(控制台输出 -> txt\\log\\console_*.log)\n"
               "  --stop    让在跑的实例在下一批边界退出\n")

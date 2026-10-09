@@ -1,4 +1,4 @@
-# 跑 crispasr-Qwen.py 只需要这一件第三方库，其余全是标准库。
+# 跑 Cg-qwen.py 只需要这一件第三方库，其余全是标准库。
 #
 # 驱动本身只用 ctypes/logging/os/re/signal/subprocess/sys/tempfile/threading/time/
 # urllib.request/contextlib/datetime/pathlib（+ Windows 上的 msvcrt、Linux 上的 fcntl），

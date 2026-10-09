@@ -129,7 +129,7 @@ BUILDS = {
     },
 }
 
-# --graph 与要建的东西一一对应（和 xhs-chain-cpu.py 的 --asr-graph 同名词）
+# --graph 与要建的东西一一对应（和 Oc-fired.py 的 --asr-graph 同名词）
 GRAPH_BUILDS = {"int8": ["punc_f32"],
                "mixed": ["punc_f32", "aed_encoder_f32"],
                "f32": ["punc_f32", "aed_encoder_f32", "aed_decoder_f32"]}
@@ -462,7 +462,7 @@ def main():
     if bad:
         return 1
     if only is None and A.graph != "int8":
-        print("下一步：python xhs-chain-cpu.py --input-dir <音频目录> --data-root <工作目录>")
+        print("下一步：python Oc-fired.py --input-dir <音频目录> --data-root <工作目录>")
     elif only is None:
         print("下一步：跑转写时记得用 --asr-graph int8，否则链路会去找没建的 encoder.f32.onnx")
     return 0

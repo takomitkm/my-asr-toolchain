@@ -1,11 +1,11 @@
 # CrispASR-Qwen —— CrispASR / Qwen3-ASR 的 GPU 批转链
 
-驱动是 `crispasr-Qwen.py`，引擎是 CrispASR 的 `qwen3` backend（Whisper 式音频编码器 +
+驱动是 `Cg-qwen.py`（旧名 `Cg-qwen.py`），引擎是 CrispASR 的 `qwen3` backend（Whisper 式音频编码器 +
 Qwen3 1.7B 解码器），跑在 CUDA 上。**一个模型直接出成品文本**：自带大小写、标点、
 中英混排，所以链路上没有独立的标点模型，也不做前端预处理。
 
 和 `cpu` 分支 `Qwen3/` 的关系：同一个驱动的两个构建。那份是 CPU 版
-（`crispasr-Qwen-cpu.py` + `crispasr-windows-x86_64-cpu` 那套件），这份是 CUDA 版；
+（`Cc-qwen.py` + `crispasr-windows-x86_64-cpu` 那套件），这份是 CUDA 版；
 两边的 I/O 契约逐条相同，数据面可以互换。仓库根 README 有四引擎对比表。
 
 CrispASR 这份 CUDA 构建把模型【内置】的语种判别吃掉了（`--list-backends` 的
@@ -53,9 +53,9 @@ GPU 档的三个开关在驱动 `CONFIG · CrispASR` 一节：`CRISPASR_BACKEND 
 ## 2. 跑
 
 ```bat
-.venv\Scripts\python crispasr-Qwen.py --start   :: 分离后台启动
-.venv\Scripts\python crispasr-Qwen.py --stop     :: 写 STOP 标志，下一批边界干净退出
-.venv\Scripts\python crispasr-Qwen.py            :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
+.venv\Scripts\python Cg-qwen.py --start   :: 分离后台启动
+.venv\Scripts\python Cg-qwen.py --stop     :: 写 STOP 标志，下一批边界干净退出
+.venv\Scripts\python Cg-qwen.py            :: 前台跑（Ctrl+C 一次=本批跑完退，两次=立刻杀子进程）
 ```
 
 **关掉启动它的那个控制台 = 连坐杀 crispasr 子进程**（Job Object 是故意绑上去的，
@@ -194,7 +194,7 @@ CUDA 侧的行为差异只在 `CRISPASR_GPU_BACKEND` 这一个开关和 `ggml-cu
 - **silero v6.2.0 对唱歌素材判 0 段 → 整条静默丢弃**（rc 仍为 0、不落 `.txt`）。
   口语素材上 v5/v6 打平（同一份 89.84 s 中文：切 5 段/75.78 s 对 7 段/75.88 s，墙钟
   55.9 对 56.1 s），但"口语打平"不等于"全语料打平"。**而且这份驱动不写 `no_speech.txt`**
-  ——记账逻辑在 `crisper-xhs-qwen-asr.py` 和 CPU 版那份里，这份不改（驱动 CONFIG 一节末尾那条注释就写着这件事）。
+  ——记账逻辑在 `Wlid-Og-fired-Cg-qwen.py` 和 CPU 版那份里，这份不改（驱动 CONFIG 一节末尾那条注释就写着这件事）。
   要吞了多少的账，用 `CrispASR-FireRed/` 那份驱动跑，或换 `firered-vad.gguf`。
 - `--stop` / STOP 文件是**批边界**退出，一批最长可能等 `BATCH_SIZE` × 单文件时长。
 - MSVC 4 件和（GPU 档才需要的）CUDA 运行库是两处人工门槛；前者 rc=127 已实测，

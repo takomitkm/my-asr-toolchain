@@ -1,6 +1,6 @@
 {
  "engine": "CrispASR / qwen3（CUDA）",
- "driver": "crispasr-Qwen.py",
+ "driver": "Cg-qwen.py",
  "branch": "gpu",
  "note": "单引擎 qwen3-ASR：一个模型直接出带标点成品文本，链路上没有独立标点模型。",
  "roots": {

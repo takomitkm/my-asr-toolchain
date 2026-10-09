@@ -1,5 +1,5 @@
-# 转写运行时（PRIMARY_LEG="onnx" 时 crisper-xhs-qwen-asr.py 用到的就是这一个文件；
-# cpu 分支那个独立批驱动 xhs-chain-cpu.py 也是同一套）
+# 转写运行时（PRIMARY_LEG="onnx" 时 Wlid-Og-fired-Cg-qwen.py 用到的就是这一个文件；
+# cpu 分支那个独立批驱动 Oc-fired.py 也是同一套）
 #
 # 这套 pins 里 7 件是 2026-10-06 产线上实测在跑的（CPython 3.12.15），逐字对拍在这套上过的。
 # 干净机复现那轮（README 12.2）用的是 CPython 3.13.11，同一套 pins 全部装上并跑通，
