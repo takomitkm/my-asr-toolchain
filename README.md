@@ -44,11 +44,13 @@
 
 | 现名 | 拆读 | 10-10 前的旧名 |
 |---|---|---|
-| `Wlid-Og-fired-Cg-qwen.py` | whisper 先判语种 → 判到范围内走 FireRed ONNX 全链（N 卡）→ 判到范围外回退 crispasr qwen3（N 卡） | `Wlid-Og-fired-Cg-qwen.py`（10-08 前叫 `xhs-asr.py`） |
-| `Cg-qwen.py` | crispasr qwen3，N 卡 | `Cg-qwen.py` |
-| `Wg-large.py` | faster-whisper large-v3，N 卡 | `Wg-large.py`（`batch10` 是当时的批大小 10） |
-| `Oc-fired.py` | FireRed ONNX 全链，CPU | `Oc-fired.py` |
-| `Cc-qwen.py` | crispasr qwen3，CPU | `Cc-qwen.py` |
+| `Wlid-Og-fired-Cg-qwen.py` | whisper 先判语种 → 判到范围内走 FireRed ONNX 全链（N 卡）→ 判到范围外回退 crispasr qwen3（N 卡） | `crisper-xhs-qwen-asr.py`（10-08 前叫 `xhs-asr.py`） |
+| `Cg-qwen.py` | crispasr qwen3，N 卡 | `crispasr-Qwen.py` |
+| `Wg-large.py` | faster-whisper large-v3，N 卡 | `whisper-batch10.py`（`batch10` 是当时的批大小 10） |
+| `Oc-fired.py` | FireRed ONNX 全链，CPU | `xhs-chain-cpu.py` |
+| `Cc-qwen.py` | crispasr qwen3，CPU | `crispasr-Qwen-cpu.py` |
+
+第三列是这张表存在的全部理由，所以它不是替换出来的：10-10 那轮改名按全文替换跑，脚本分不清一行是「指现在这个文件」还是「记它以前叫什么」，把这些旧名一起换成了新名，读起来就成了「旧名 = 现名」。上面那些旧名已逐处对 git 历史修回。
 
 两处边界写在这，免得被当成漏改：
 
