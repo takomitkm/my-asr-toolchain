@@ -1,6 +1,6 @@
 # CrispASR-Qwen —— CrispASR / Qwen3-ASR 的 GPU 批转链
 
-驱动是 `Cg-qwen.py`（旧名 `Cg-qwen.py`），引擎是 CrispASR 的 `qwen3` backend（Whisper 式音频编码器 +
+驱动是 `Cg-qwen.py`（旧名 `crispasr-Qwen.py`），引擎是 CrispASR 的 `qwen3` backend（Whisper 式音频编码器 +
 Qwen3 1.7B 解码器），跑在 CUDA 上。**一个模型直接出成品文本**：自带大小写、标点、
 中英混排，所以链路上没有独立的标点模型，也不做前端预处理。
 

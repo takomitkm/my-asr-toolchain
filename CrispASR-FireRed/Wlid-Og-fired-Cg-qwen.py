@@ -1,7 +1,7 @@
 r"""
 CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底,由 Cg-qwen.py 复制而来
 (本名按仓库根 README 的记号法拆:Wlid 判语种 -> Og-fired 主链 -> Cg-qwen 兜底;
- 旧名 Wlid-Og-fired-Cg-qwen.py,10-08 前还叫 xhs-asr.py,三份是同一个文件)
+ 旧名 crisper-xhs-qwen-asr.py,10-08 前还叫 xhs-asr.py,三份是同一个文件)
 
 本文件与 Cg-qwen.py 的差异在引擎组合、VAD、标点、语种处理和"换引擎"这件事由谁
 来做这几处;队列、硬链接暂存、批内结算、单实例锁、Job Object、通知全部原样沿用。

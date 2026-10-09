@@ -1,6 +1,6 @@
 # faster_whisper —— faster-whisper / large-v3 的 GPU 批转链（最老、最轻的一条）
 
-驱动是 `Wg-large.py`（旧名 `Wg-large.py`，`batch10` 是当时的批大小 10），引擎是
+驱动是 `Wg-large.py`（旧名 `whisper-batch10.py`，`batch10` 是当时的批大小 10），引擎是
 faster-whisper（OpenAI Whisper large-v3 的
 CTranslate2 移植）+ `BatchedInferencePipeline`。四套方案里它最老：一个 ct2 模型目录
 + 一组 pip 包就能跑，VAD（silero，库内置）和标点（whisper 自己出）都不用外部件。

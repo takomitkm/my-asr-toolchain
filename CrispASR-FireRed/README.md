@@ -1,6 +1,6 @@
 # CrispASR-FireRed —— FireRedASR2S 全链路（ONNX，可上 N 卡）+ qwen3 兜底的批转链
 
-驱动是 `Wlid-Og-fired-Cg-qwen.py`（旧名 `Wlid-Og-fired-Cg-qwen.py`，10-08 前还叫 `xhs-asr.py`，
+驱动是 `Wlid-Og-fired-Cg-qwen.py`（旧名 `crisper-xhs-qwen-asr.py`，10-08 前还叫 `xhs-asr.py`，
 三份是同一个文件）。名字按仓库根 README 的记号法拆读：`Wlid` = whisper-tiny 先判语种、
 `Og-fired` = 判到范围内就走 FireRedASR2S 的 ONNX 全链（N 卡）、`Cg-qwen` = 判到范围外回退
 crispasr 的 qwen3（N 卡）；主力一直是 FireRed 那套。
