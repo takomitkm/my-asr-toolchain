@@ -1,8 +1,14 @@
 {
- "engine": "CrispASR / firered-asr（CUDA）",
+ "engine": "CrispASR / firered-asr（CUDA）+ FireRedASR2S ONNX 全链路",
  "driver": "crisper-xhs-qwen-asr.py",
  "branch": "gpu",
- "note": "主引擎 FireRedASR2-AED + 兜底 qwen3 的双引擎驱动。兜底档在判到 AED 语种范围外时才用，所以 qwen3 那份权重也是必须组件。",
+ "note": "主引擎 FireRedASR2-AED + 兜底 qwen3 的双引擎驱动。10-09 起主力那一路默认换成本包 onnx/ 里的 FireRedASR2S ONNX 全链路（FireRedVAD→AED→FireRedPunc，纯 onnxruntime，三个会话进程内常驻），先由 crispasr 的默认 silero VAD + whisper-tiny 判语种，判到 AED 范围外才用 qwen3；所以 crispasr 那件程序、qwen3 权重、判别模型和闸门 VAD 都是必须组件。想退回改前的行为：把驱动顶部 PRIMARY_LEG 改成 \"crispasr\"（那 8 行 crispasr 代码一行没删）。",
+ "onnx_chain": {
+  "code": "onnx/（asr_chain.py + aed_ort.py + models/fireredvad-onnx/infer_onnx.py + dequant_*.py）",
+  "requirements": ["onnx/requirements.txt", "onnx/requirements-build.txt"],
+  "assets": "onnx/fetch_assets.py",
+  "note": "ONNX 那三件权重（AED 图 / VAD / Punc）不进本清单：它们由 onnx/fetch_assets.py 自己带的那份 DOWNLOADS 描述（含 bytes+sha256，其中 punc 是本地逆量化产物）。两份清单各管各的落点，没有重叠，所以不存在两处对齐问题。"
+ },
  "roots": {
   "bin": {
    "default": "crispasr",
@@ -188,7 +194,19 @@
    "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
    "grade": "A",
    "license": "MIT（whisper.cpp）",
-   "note": "-l auto 时的前置语种判别器（models/download-ggml-model.sh:9 的 src 同仓）。必须给成本地文件，否则 crispasr 会去联网下、离线机器上卡满超时。语种写死（如 \"zh\"）时这件不参与拼命令，可以不下。"
+   "note": "两种用法，都必须：(1) PRIMARY_LEG=\"onnx\" 时它是语种闸门第 2 步的判别器（驱动 CONFIG 里的 CRISPASR_LID_MODEL，闸门每个文件调一次 -dl）；(2) PRIMARY_LEG=\"crispasr\" 时它是 -l auto 的前置语种判别器（models/download-ggml-model.sh:9 的 src 同仓）。必须给成本地文件，否则 crispasr 会去联网下、离线机器上卡满超时。语种写死（如 \"zh\"）且 PRIMARY_LEG=\"crispasr\" 时这件才不参与拼命令。"
+  },
+  {
+   "name": "silero_v620_gate",
+   "kind": "file",
+   "root": "model",
+   "path": "ggml-silero-v6.2.0.bin",
+   "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+   "bytes": 885098,
+   "sha256": "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
+   "grade": "A",
+   "license": "MIT（Silero VAD）/ 预转换件由 ggml-org 发布",
+   "note": "语种闸门第 1 步的 VAD（驱动 CONFIG 里的 GATE_VAD_MODEL），也就是 crispasr --vad 的【默认】那一个：examples/cli/crispasr_vad_cli.cpp:19 的 kVadSileroUrl 就是上面这条 URL，docs/cli.md:214 写的\"Auto-downloads ggml-silero-v6.2.0.bin (~885 KB)\"是同一件。这里给本地路径是为了不让它在每个文件开头联网下一次。sha256 两头都对上了：HuggingFace api/models/ggml-org/whisper-vad/tree/main 的 lfs.oid，以及那台纯 CPU 测试机上实跑的那份逐字节相同（10-09 sha256sum 直读）。注意它只用于【判语种前的导段】，不参与转写——转写侧的 VAD 是下面那条 firered_vad（crispasr 腿）和 ONNX 图里的 FireRedVAD（主链腿）。"
   },
   {
    "name": "firered_vad",
@@ -200,7 +218,7 @@
    "sha256": "72d37db1a5d2a9db386d1452b3f54d13f97bea79710105fc65acd050ea7db600",
    "grade": "A",
    "license": "BSD-2-Clause（FireRedVAD 上游）",
-   "note": "VAD 权重。选它而不是 crispasr 默认的 silero v6.2.0，因为 v6 对唱歌素材判 0 段（rc 仍为 0、不落 .txt ⇒ 整条静默丢弃）：同一条 60 s 日推歌曲副歌，firered 出 97 字真歌词、silero-v5 捡回 59 字、silero-v6 出 0 段。代价是多花约 31% 墙钟。驱动靠 no_speech.txt 给无语音文件记账。"
+   "note": "VAD 权重。选它而不是 crispasr 默认的 silero v6.2.0，因为 v6 对唱歌素材判 0 段（rc 仍为 0、不落 .txt ⇒ 整条静默丢弃）：同一条 60 s 日推歌曲副歌，firered 出 97 字真歌词、silero-v5 捡回 59 字、silero-v6 出 0 段。代价是多花约 31% 墙钟。驱动靠 no_speech.txt 给无语音文件记账。10-09 之后它只管【crispasr 那两条腿】（_base_cmd 里 -vm 那一行，qwen3 兜底与容器退回都走它）；主力 ONNX 腿用 FireRedVAD 的 ONNX 图，闸门用上面那条 silero。"
   },
   {
    "name": "qwen3_asr_1_7b_q8_0",

@@ -1,0 +1,25 @@
+# 与 cpu 分支 FireRed-ONNX/.gitignore 同一份规则（那边是包根，这里在 CrispASR-FireRed/onnx/）。
+# 规则都相对本目录，所以 models/* 正好盖住 fetch_assets.py 下载与建造出来的全部权重。
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 资源默认落点：models/ 整棵树不进库，只放回上游那两份文本
+# （infer_onnx.py 是 vendor 的 FireRedVAD ONNX 推理源码、README.md 是它的说明，
+#  两份都是运行闭包必需的文件，哈希在上游核验记录里，所以必须入库）。
+models/*
+!models/fireredvad-onnx/
+models/fireredvad-onnx/*
+!models/fireredvad-onnx/infer_onnx.py
+!models/fireredvad-onnx/README.md
+
+# 驱动的默认数据根（数据根指到包外就别想出现，防手滑）
+/data/
+
+# 运行产物
+*.log
+.lock
+STOP
+no_speech.txt

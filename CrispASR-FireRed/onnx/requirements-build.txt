@@ -1,0 +1,11 @@
+# 只用于"建造"那一侧：跑 dequant_punc.py / dequant_aed.py（fetch_assets.py 的建造步骤）。
+# 转写本身不需要 onnx —— 运行时环境里没装 onnx 也能跑，这是刻意的（产物是 .onnx 文件，
+# 链路只用 onnxruntime 读）。
+#
+# 两种装法，任选：
+#   a) 就在转写环境里加装：pip install -r requirements-build.txt
+#   b) 另起一个环境，把它交给 fetch_assets.py --builder-python 指过去
+# onnx 版本按产线实测的 1.23.1 钉；放宽到 1.16+ 理论也行，但没实测过，别当依据。
+
+onnx==1.23.1
+numpy==2.5.3

@@ -6,7 +6,8 @@ __pycache__/
 *.pyo
 
 # fetch_assets.py 的落点与中间件一律不进库（清单只存 URL + 字节数 + sha256）。
-# 注意 FireRed-ONNX/ 自己那份 .gitignore 还管着 models/ 的例外（里面有两个是源码文本）。
+# 注意 CrispASR-FireRed/onnx/ 自己那份 .gitignore 还管着 onnx/models/ 的例外
+# （里面两份是上游源码文本，必须入库）。
 crispasr/
 model/
 *.part

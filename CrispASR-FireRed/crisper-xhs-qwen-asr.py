@@ -119,6 +119,8 @@ CrispASR 批量转写驱动(Windows) —— FireRed AED 主引擎 + qwen3 兜底
 """
 
 import ctypes
+import itertools
+import json
 import logging
 import os
 import re
@@ -181,6 +183,12 @@ CRISPASR_LID_MODEL = os.path.join(MODEL_DIR, "ggml-tiny.bin")
 # v5.1.2 只捡回 59 字,firered 出 97 字真歌词。详细数据与代价见 CONFIG · VAD。
 # 另两份脚本(crispasr-Qwen.py / crispasr-Qwen-cpu.py)用 silero v6.2.0。
 CRISPASR_VAD_MODEL = os.path.join(MODEL_DIR, "firered-vad.gguf")
+# 语种闸门用的 VAD = silero v6.2.0(885,098 B),就是 crispasr 不加 -vm 时自己去
+# huggingface.co/ggml-org/whisper-vad 下的那一份。【只有闸门读它】,转写本身仍用上面
+# 的 FireRedVAD(唱歌那条形不变)。为什么闸门反过来要用 silero:这个模型是"默认"的那一个,
+# 拿它判语种和拿 crispasr 自己那套前置判别同源,而真正的分段交给 ONNX 链里的 FireRedVAD,
+# 两条腿各用各的、互不影响 —— 详见 CONFIG · 语种闸门。
+GATE_VAD_MODEL = os.path.join(MODEL_DIR, "ggml-silero-v6.2.0.bin")
 
 # ---------- 数据面目录 ----------
 ASR_ROOT   = Path(resolve_dir("ASR_TEXT_DIR", "txt"))
@@ -639,6 +647,112 @@ BATCH_SIZE = 28
 # 落盘并清理源文件,而不是等整批跑完(一批可达 1~3 小时)才统一结算。
 BATCH_POLL_SEC = 30
 
+# ==================== CONFIG · FireRed ONNX 主链 + 语种闸门 ====================
+#
+# ---------- 主力那一路换成 ONNX 全链路 ----------
+#
+# PRIMARY_LEG 决定"小红书那一路"(ENGINE_PRIMARY = aed)由谁来实现:
+#   "onnx"     —— 本包 onnx/ 下的 FireRedASR2S 全链路:FireRedVAD(ONNX) →
+#                 FireRedASR2-AED(纯 onnxruntime, aed_ort.py) → FireRedPunc(ONNX),
+#                 三个会话在本进程里常驻一次,逐文件跑。
+#   "crispasr" —— 10-09 之前的形态:整批交给 crispasr.exe 的 firered-asr 后端。
+#                 留着它有两个用处:权重/闸门任一缺席时还能有个跑得起来的样子;
+#                 同机对拍时要拿它当参照。
+#
+# 为什么值得换(全部是本仓实测,不是推测):
+#   · crispasr 的 AED 后端把【解码器权重恒定放在 CPU】(src/firered_asr.cpp:441-444),
+#     本机 nvidia-smi dmon 连采 18 秒 sm/mem 全 0%、整卡 2-6 W —— 显卡整天空闲,
+#     而它吃 6-7 个 CPU 核。ONNX 这条链把 f32 编码器交给 CUDA EP,是"真能在 N 卡上跑"的那条路。
+#   · 10-08 校机纯 CPU 同机同件对拍:单件 29.2 s vs crispasr 贪心 29.4 s(打平),
+#     批次上 ONNX 少 15%~38%。
+#   · 丢字形态不同:crispasr 每个切片解码上限硬顶 150 token(src/firered_asr.cpp:2075,
+#     无任何 CLI 参数可改),撞顶不报错、rc 仍为 0 = 【静默丢整句】;这条链的每段预算是
+#     min(段时长 × 8 token/s, cache 上限),撞顶会把 truncated 标出来。VAD 段上限设 20 s
+#     就是为绕开前者(见上面 VAD_MAX_SEGMENT_SEC 那段实测),换掉后端之后 20 这个数不再是
+#     正确性前提,但仍留着 —— 它同时是"标点按段跑"的粒度。
+#
+# 换引擎的判据仍然【只有语种】,变的是"谁来判":以前判语种这件事发生在 crispasr 批内
+# (whisper 前置判别 + 从 stderr 对号),现在发生在调用主链之前,由下面的 GATE 独立完成。
+# 于是筛子那套 _lid_map 实时对号在主链为 onnx 时不再参与(它只服务 crispasr 批量调用),
+# 兜底那一趟照常走 crispasr 自己的 -l auto(不把判到的码传下去,理由见 CONFIG · CrispASR
+# 里"换引擎备查"那段)。
+PRIMARY_LEG = (os.environ.get("ASR_PRIMARY_LEG") or "onnx").strip().lower()
+
+# ---------- ONNX 链路的代码与权重 ----------
+# 全部相对本包目录,和 crispasr 那两件一样支持环境变量覆盖;models 子树不进库,
+# 由 onnx/fetch_assets.py 一键下载 + 建造(逐件 sha256 验收)。
+ONNX_DIR        = resolve_dir("FIREDASR_ONNX_DIR", "onnx")
+ONNX_MODELS_DIR = resolve_dir("FIREDASR_ONNX_MODELS_DIR", os.path.join("onnx", "models"))
+# AED 目录留空 = 在 ONNX_MODELS_DIR 下按 sherpa-onnx-fire-red-asr2* 自动找(与链路同口径)。
+# 空值是"自己找"的哨兵,不能过 resolve_dir —— 它会把 "" 拼成本包目录,链路就改成在包目录下
+# 找 encoder.f32.onnx,起链当场 FileNotFoundError(10-09 校机沙箱实测)。
+_ONNX_ASR_ENV = (os.environ.get("FIREDASR_ONNX_ASR_DIR") or "").strip()
+ONNX_ASR_DIR = os.path.abspath(os.path.expandvars(_ONNX_ASR_ENV)) if _ONNX_ASR_ENV else ""
+ONNX_VAD_DIR  = resolve_dir("FIREDASR_ONNX_VAD_DIR",
+                            os.path.join(ONNX_MODELS_DIR, "fireredvad-onnx"))
+ONNX_PUNC_DIR = resolve_dir("FIREDASR_ONNX_PUNC_DIR",
+                            os.path.join(ONNX_MODELS_DIR, "fireredpunc-onnx"))
+ONNX_PUNC_FILE = os.environ.get("FIREDASR_ONNX_PUNC_FILE", "")   # 空 = 先 punc.f32.onnx
+
+# ---------- 执行提供者:只用 N 卡 ----------
+# cpu = 纯 CPU;cuda = CUDA EP(只会挑中 NVIDIA 独显)。这条链【不列】DirectML 与
+# OpenVINO —— 那两个能把 AMD 核显挑中,而要求是绝不用核显。
+# 装了 onnxruntime-gpu 也不代表用上了显卡:CUDA/cuDNN 运行库不齐时 ORT 只打一行警告
+# 就把会话整体退回 CPU,所以 main_loop 会拿 AedOnnx.enc_ep 断言,对不上直接不起批。
+ONNX_PROVIDER = (os.environ.get("FIREDASR_ONNX_PROVIDER") or "cpu").strip().lower()
+# 图形状:int8 = 官方量化图(对拍背书,但 CUDA EP 跑不了那些整型算子);
+# mixed = f32 编码器 + int8 解码器(实测最快,也是 cuda 档唯一有意义的选择);
+# f32   = 全逆量化(最占内存)。
+ONNX_GRAPH = (os.environ.get("FIREDASR_ONNX_GRAPH") or "mixed").strip().lower()
+ONNX_MODE  = "greedy"          # beam 实现了但未调通(慢 9 倍、输出退化),见 onnx/asr_chain.py
+ONNX_CACHE_LEN = "auto"        # KV cache 预分配:按 8 token/s 估
+# 解码器要不要也上卡。默认不给:f32 解码器是逐 token 自回归,每个 token 都要发一批
+# kernel launch,而 crispasr 那边实测过这笔账(源码注释原话"per-token GPU launches
+# were 20ms each" 对 CPU 一整步 60ms)。这里留一个开关,是为了在本机测出结论而不是引用它。
+ONNX_DEC_ON_GPU = False
+
+# ---------- 线程 ----------
+# 与 cpu 分支那个分发包同口径:ASR 吃逻辑核的一半,VAD 上限 8,标点 4。
+# 换到显卡之后 ASR 的 CPU 线程只影响前端特征与解码器(mixed 档解码器在 CPU),别指望调它
+# 能救编码器 —— 编码器在卡上时 CPU 线程数与它无关。
+ONNX_ASR_THREADS  = int(os.environ.get("FIREDASR_ONNX_THREADS") or
+                        max(2, (os.cpu_count() or 8) // 2))
+ONNX_VAD_THREADS  = min(8, os.cpu_count() or 8)
+ONNX_PUNC_THREADS = 4
+
+# ---------- 语种闸门 ----------
+#
+# 两步,都是 crispasr 的短调用,固定 --gpu-backend cpu(独显留给主链,而且这两次调用
+# 各只要一两秒,让 crispasr 去建 CUDA 上下文纯属浪费一份显存):
+#   1) `--vad -vm <silero> --vad-export-raw <json> --strict-pipeline --require-vad`
+#      拿真语音段。必须用 --vad-export-raw:不带 -raw 的那份导的是 kind="chunks"
+#      (30 s 网格),不是语音段(10-09 校机实测)。
+#   2) 按语音段拼出【前 15 秒语音】写成临时 wav,再 `-m <ggml-tiny.bin> -dl` 判语种。
+#      为什么切 15 s:whisper 那条判别路径本来就只截原始音频前 15 s
+#      (src/crispasr_lid.cpp:284 kLidMaxSamples = 16000*15),把"原始前 15 s"换成
+#      "语音前 15 s"才是这一步的全部价值。
+#   正对照(10-09 校机合成件 ctrl_music_intro.wav = 15 s 合成器乐 + 20 s 中文语音,
+#   标准答案 zh;探针 b1009_scan/gate5.py):
+#      原始前 15 s  → en 0.784(错)
+#      语音前 15 s  → zh 0.966(对)
+#   代价实测(校机 CPU、-t 2,与她的生产批次同机争抢;s1.wav 80.2 s):
+#   VAD 导段 0.46 s + 判别 1.07 s ⇒ 约 1.5 s/文件(探针 b1009_scan/g6b.py)。
+#   两步【不能合成一次调用】:同一条命令里 --vad-export-raw 与 -dl 同时给时,crispasr
+#   0.46 s 就退出且【不出判别行】= 静默假成功,闸门会全批没结论。
+#   三条边界:
+#     · silero 判 0 段(唱歌素材的已知形态)⇒ 拼不出语音前缀 ⇒ 退回对原始文件直接 -dl,
+#       仍然有结论;判到范围外才扣文件。
+#     · 闸门【没有】结论(没抓到判别行 / crispasr 非零退出)⇒ 不扣文件,按主链跑,
+#       日志里报一行。宁可让 AED 编造一段(那是已知的老风险),也不能因为闸门自己瞎了
+#       就把整棵树拖去兜底引擎。
+#     · 语种名单沿用 _AED_IN_RANGE,没有另立一套。ONNX 这条 AED 和 crispasr 那个是同一个
+#       模型,覆盖范围一样,而且它【同样不吃语言标记】—— 判到的码只用来挑文件。
+GATE_LID_SEC     = 15.0    # 判别用多长语音(与 crispasr 内部那个 15 s 上限同值)
+GATE_MIN_SPEECH_SEC = 1.0   # 拼不出这么多秒语音就退回对原始文件直接 -dl
+GATE_THREADS     = 2       # 闸门两次 crispasr 调用的 -t
+GATE_TIMEOUT_SEC = 300     # 单步超时:闸门本该一两秒,超这个数就是环境出了问题
+GATE_SELFCHECK_FILES = 3   # 起批前拿前几个待处理文件实测闸门,一次出结论就放行
+
 # ==================== CONFIG · 其他 ====================
 
 LOG_LEVEL      = logging.INFO
@@ -1024,6 +1138,9 @@ def trash(source_file: Path):
 
 _STAGE_PREFIX = "asr"
 
+# 进程级自增序号，见 stage_paths 的注释（嵌套暂存会撞名）。
+_STAGE_SEQ = itertools.count()
+
 _NO_SPEECH_RE = re.compile(r"no speech detected in '([^']*)'")
 
 # CLI 的语种判别行:crispasr_run.cpp:1003 `crispasr: LID -> language = 'xx' (whisper, p=0.395)`
@@ -1141,10 +1258,16 @@ def sweep_stage():
 
 
 def stage_paths(files: list) -> dict:
-    """同卷硬链接零拷贝;失败退回原路径,最坏等于未修复前的行为。"""
+    """同卷硬链接零拷贝;失败退回原路径,最坏等于未修复前的行为。
+
+    链接名用全局自增序号，不用本批下标：主链的 ONNX 路径会在"批次暂存"里再套
+    一层"单文件暂存"（闸门和 crispasr 回退各自都要 ASCII 路径），两层各从 0 计数的
+    话，内层会 unlink 掉外层正拿着的那个 asr0.wav 再改成别的文件，外层命令就指向
+    错音频了。自增序号保证任何一次嵌套都不重名。
+    """
     staged = {}
-    for i, f in enumerate(files):
-        link = STAGE_DIR / f"{_STAGE_PREFIX}{i}{f.suffix.lower()}"
+    for f in files:
+        link = STAGE_DIR / f"{_STAGE_PREFIX}{next(_STAGE_SEQ)}{f.suffix.lower()}"
         try:
             link.unlink(missing_ok=True)
             os.link(str(f), str(link))
@@ -1283,7 +1406,7 @@ def _run(cmd, on_tick=None, live=None):
     return proc.returncode, "\n".join(sink)
 
 
-def transcribe_batch(files: list, on_done=None, engine: str = ENGINE_PRIMARY,
+def _crispasr_batch(files: list, on_done=None, engine: str = ENGINE_PRIMARY,
                      flagged=None):
     """
     一次调用转写多个文件。engine 用哪套引擎,配置见 ENGINES。
@@ -1402,7 +1525,7 @@ def transcribe_batch(files: list, on_done=None, engine: str = ENGINE_PRIMARY,
         return results, None
 
 
-def transcribe_one(file_path: Path, engine: str = ENGINE_PRIMARY):
+def _crispasr_one(file_path: Path, engine: str = ENGINE_PRIMARY):
     """
     单文件转写,用于批量失败后的精确定位。
     返回 (text, error);text 为 "" 表示合法的空转写。
@@ -1426,7 +1549,7 @@ def transcribe_one(file_path: Path, engine: str = ENGINE_PRIMARY):
         if hit:
             logger.warning(f"语种判别 [{file_path.name}] = {hit[0]} ({hit[1]})"
                            f" —— 不在 AED 可判范围,改用 {ENGINE_FALLBACK} 重跑")
-            return transcribe_one(file_path, ENGINE_FALLBACK)
+            return _crispasr_one(file_path, ENGINE_FALLBACK)
 
         out_txt = base + ".txt"
         if not os.path.exists(out_txt):
@@ -1436,6 +1559,493 @@ def transcribe_one(file_path: Path, engine: str = ENGINE_PRIMARY):
                 return fh.read().strip(), None
         except Exception as e:
             return None, f"读取输出文件失败:{e}"
+
+
+# ==================== 语种闸门 + FireRed ONNX 主链 ====================
+#
+# 这一整段只在 PRIMARY_LEG == "onnx" 时工作。crispasr 那两条腿(_crispasr_batch /
+# _crispasr_one)一行没改,兜底 qwen3 照旧走它们 —— 换的只是"主力那一路由谁实现"。
+
+_GATE_LANG_RE = re.compile(r"auto-detected language:\s*(\S+)\s*\(p\s*=\s*([\d.]+)\)")
+
+
+def _gate_crispasr(extra):
+    """闸门那两次 crispasr 短调用。
+
+    固定 `--gpu-backend cpu`:独显要留给 ONNX 主链,而且这两步各只要半秒到一秒
+    (10-09 校机纯 CPU 实测:VAD 导段 0.46 s、-dl 1.07 s),为它们建一次 CUDA 上下文
+    纯属浪费,还会多一份 ggml-cuda 常驻显存。
+    `-m` 用 whisper-tiny(77 MB):`--vad-export-raw` 和 `-dl` 都只要一个能加载的后端,
+    tiny 是手里最小的那一个,而且判别器本来就是它。
+
+    这里【不传】--no-prints:判别行是 crispasr 的 print,受 !no_prints 控制,加了它
+    闸门就一行结论都抓不到(同一个坑在 LID_VERBOSE 那段写过)。
+    也不传 --strict-pipeline 之外的任何东西到第 2 步:-dl 与 --vad-export-raw 同时给时,
+    实测 0.46 s 就退出且不打印语种 = 静默假成功(10-09 校机 E 档),所以两步必须分开跑。
+    """
+    cmd = [CRISPASR_EXE, "-m", CRISPASR_LID_MODEL, "-t", str(GATE_THREADS),
+           "--gpu-backend", "cpu"] + [str(x) for x in extra]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, encoding="utf-8",
+                                errors="replace", creationflags=_POPEN_FLAGS)
+    except FileNotFoundError:
+        return -1, f"可执行文件未找到:{CRISPASR_EXE}"
+    except Exception as e:
+        return -1, str(e)
+    bind_child(proc)          # 驱动被强杀时闸门子进程不能变孤儿
+    try:
+        err = proc.communicate(timeout=GATE_TIMEOUT_SEC)[1] or ""
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            err = proc.communicate()[1] or ""
+        except Exception:
+            err = ""
+        return -124, f"闸门调用超时 {GATE_TIMEOUT_SEC:.0f}s:{err}"
+    return proc.returncode, err
+
+
+def _gate_vad_segments(src, tmpdir: str):
+    """silero VAD 导真语音段 → ([(起秒, 止秒)], None) 或 (None, 错误说明)。
+
+    必须用 --vad-export-raw:不带 -raw 的那份导出来是 kind="chunks"(30 s 网格),
+    不是语音段(10-09 校机实测)。段表里 start/end 是【采样点】、t0_cs/t1_cs 是【百分秒】,
+    文件里没写单位,所以优先取带 _cs 的那两个字段除以 100 —— 名字自己说明单位,不靠猜。
+
+    还要防 crispasr 自己的一个二次兜底:silero 一条语音都没找到时,它对长素材不空手
+    退出,而是打一行 "VAD returned no speech at all on a Ns clip — falling back to
+    full-clip chunks",然后把整条按 30 s 网格当段表写出来(10-09 校机实测:120 s 日语歌
+    → silero 0 段 → 段表 4 条整格;20 s 纯器乐 → 0 段、不落网格)。那些格子【不是】语音,
+    留着会把"原始前 15 s"包装成"语音前缀",日志写成"原始前 15s 那段没用上" —— 恰好反了。
+    所以按 stderr 那句标记(取纯 ASCII 片段,那行里的破折号经编码转换会花)把网格丢掉,
+    让下面那条已经写好的 0 段分支处理;两条分支的处置本来就相同(都是判原始文件)。
+    """
+    json_out = os.path.join(tmpdir, "vad.json")
+    rc, err = _gate_crispasr(["-f", src, "--vad", "-vm", GATE_VAD_MODEL,
+                              "--vad-export-raw", json_out,
+                              "--strict-pipeline", "--require-vad"])
+    if not os.path.isfile(json_out):
+        return None, f"VAD 没出段表(rc={rc}):{(err or '').strip()[-200:]}"
+    if "full-clip chunks" in (err or ""):
+        return [], None
+    try:
+        d = json.loads(Path(json_out).read_text(encoding="utf-8"))
+    except Exception as e:
+        return None, f"VAD 段表读不进(rc={rc}):{e}"
+    v = d.get("crispasr_vad", d)
+    segs = []
+    for s in (v.get("slices") or []):
+        if "t0_cs" in s and "t1_cs" in s:
+            segs.append((float(s["t0_cs"]) / 100.0, float(s["t1_cs"]) / 100.0))
+        else:
+            sr = float(v.get("sample_rate") or 16000)
+            segs.append((float(s["start"]) / sr, float(s["end"]) / sr))
+    return segs, None
+
+
+def _gate_load_audio(src):
+    """按链路口径读成 16k 单声道 float32;读不了返回 None。
+
+    libsndfile 认 wav/flac/ogg/oga/opus/mp3,不认 m4a / mp4 / aac —— 那几种原来是靠
+    crispasr 内部的 ffmpeg 解的。读不了的文件闸门只能退回"直接判原始文件",主链也接不了,
+    由调用方转给 crispasr 的【同一个模型】(不换引擎:语种没问题,只是容器解不了)。
+    """
+    try:
+        return chain_module().load_audio(src)
+    except Exception as e:
+        logger.info(f"闸门:{os.path.basename(str(src))} 这个容器链路读不了"
+                    f"({type(e).__name__}),按原始文件判语种")
+        return None
+
+
+def _speech_prefix(wav, sr, segs, want_sec: float):
+    """把语音段按时间顺序接起来,接够 want_sec 就截断。够不到返回 (None, None)。
+
+    第二个返回值说这段前缀占在【原始时间轴】的哪儿:{"head": 首个用到的采样秒位,
+    "tail": 末个用到的采样秒位, "k": 用了几段},只给日志用。带上它是因为光一句
+    "语音前缀 15 s" 看不出闸门到底跳过了多少片头,而"原始前 15 s 那段没用上"这种话
+    在整段只有一个长语音段的素材上是假的(10-09 校机实测:段表 = 一条 0.03–79.55 s,
+    拼出来的前缀就是原始的前 15 s,一秒都没跳过)。
+    """
+    parts, got, head, tail, k = [], 0.0, None, 0.0, 0
+    for s, e in segs:
+        i0 = max(0, int(s * sr))
+        i1 = min(int(wav.size), int(e * sr))
+        if i1 <= i0:
+            continue
+        if head is None:
+            head = i0 / sr
+        parts.append(wav[i0:i1])
+        before, got = got, got + (i1 - i0) / sr
+        k += 1
+        if got >= want_sec:
+            tail = (i0 + int((want_sec - before) * sr)) / sr
+            break
+        tail = i1 / sr
+    if not parts:
+        return None, None
+    out = np.concatenate(parts)
+    return out[: int(want_sec * sr)], {"head": head or 0.0, "tail": tail, "k": k}
+
+
+def gate_language(src):
+    """语种闸门:silero VAD → 语音前缀 → whisper-tiny -dl。
+
+    返回 {"code": 码|None, "p": 置信度|None, "why": 依据说明, "readable": 主链能不能读}。
+
+    code=None 的含义是【闸门没结论】,调用方必须按主链跑并把这一行写进日志 ——
+    不能拿"看不见"当"范围外",否则一个 crispasr 起不来就能把整批文件拖去兜底引擎。
+    判据本身沿用 _AED_IN_RANGE(与 crispasr 筛子同一份名单,没有另立一套)。
+    """
+    import soundfile as sf
+    src = str(src)
+    with tempfile.TemporaryDirectory(prefix="asrgate") as tmpdir:
+        segs, verr = _gate_vad_segments(src, tmpdir)
+        if segs is None:
+            logger.warning(f"闸门 VAD 失败:{verr}")
+            segs = []
+        wav = _gate_load_audio(src)
+        if wav is None:
+            target, why = src, "容器读不了,直接判原始文件"
+            readable = False
+        else:
+            readable = True
+            pref, meta = (_speech_prefix(wav[0], wav[1], segs, GATE_LID_SEC)
+                          if segs else (None, None))
+            if pref is None or len(pref) / wav[1] < GATE_MIN_SPEECH_SEC:
+                target, why = src, (f"silero 判 {len(segs)} 段、拼不出 "
+                                   f"{GATE_MIN_SPEECH_SEC:g}s 语音,直接判原始文件")
+            else:
+                target = os.path.join(tmpdir, "lid.wav")
+                sf.write(target, pref, int(wav[1]), subtype="PCM_16")
+                why = (f"silero {len(segs)} 段 → 语音前缀 {len(pref) / wav[1]:.1f}s"
+                       f"(取自原始 {meta['head']:.1f}–{meta['tail']:.1f}s 的 "
+                       f"{meta['k']} 段)")
+        rc, err = _gate_crispasr(["-f", target, "-dl"])
+        m = _GATE_LANG_RE.search(err or "")
+        if not m:
+            return {"code": None, "p": None, "readable": readable,
+                    "why": f"没抓到判别行(rc={rc},判别器 whisper-tiny,"
+                           f"{why}):{(err or '').strip()[-160:]}"}
+        return {"code": m.group(1).lower(), "p": float(m.group(2)),
+                "readable": readable, "why": f"{m.group(1)} p={m.group(2)} / {why}"}
+
+
+# ---------- ONNX 链路的加载与调用 ----------
+
+_chain_mod = None
+_chain_engine = None
+_chain_lock = threading.Lock()
+_chain_fatal = ""      # 建链路失败的原因;非空就整轮降级到 crispasr 主链
+
+
+def chain_module():
+    """导入本包 onnx/asr_chain.py,并把它的目录全局钉成本 CONFIG 的值。
+
+    这一步很便宜:asr_chain 在 import 时只拉 numpy/soundfile,onnxruntime 是建会话时
+    才 import 的。所以闸门读音频用它,真正吃几个 GB 的三个会话由 chain_engine() 负责。
+    """
+    global _chain_mod
+    if _chain_mod is None:
+        if ONNX_DIR not in sys.path:
+            sys.path.insert(0, ONNX_DIR)
+        import asr_chain as chain
+        # 目录以本 CONFIG 为唯一权威(链路侧那几个全局只是默认值)。逐个赋值而不是只给
+        # MODELS:cpu 分支踩过那个坑 —— 只搬 MODELS 时 VAD/Punc 还指在旧目录上,
+        # 表现为 ASR 换了地方、断句和标点读别的机器留下的文件。
+        chain.MODELS = Path(ONNX_MODELS_DIR)
+        chain.ASR_DIR = ONNX_ASR_DIR
+        chain.VAD_DIR = Path(ONNX_VAD_DIR)
+        chain.PUNC_DIR = Path(ONNX_PUNC_DIR)
+        chain.PUNC_FILE = ONNX_PUNC_FILE
+        # 驱动自己要用 numpy(拼语音前缀、VAD 内存直喂),从链路那份直接取,不再 import 一次:
+        # 装了 onnxruntime 就必然装了 numpy,而这条腿【不】是标准库依赖 —— 真缺了这里就抛
+        # ImportError,由 main_loop 的起批前自检拦下,不会静默降级。
+        globals()["np"] = chain.np
+        _chain_mod = chain
+    return _chain_mod
+
+
+class OnnxChain:
+    """FireRedASR2S ONNX 全链路在本进程常驻一份:FireRedVAD → AED → FireRedPunc。
+
+    与 cpu 分支那个独立驱动(xhs-chain-cpu.py 的 Engine)同一口径,两点值得记:
+      · VAD 不走"临时 wav 往返" —— 链路自带的 run_vad 会 sf.write 到 %TEMP%\\_chain_vad.wav
+        再读回来,与生产批次同名的话会互相踩,这里改成内存直喂;
+      · float→int16 用 rint,与 PCM_16 落盘的舍入口径一致,免得换条路就换了量化误差。
+    标点恒在 CPU:它是 4 亿参数的 BERT,上卡只跟 AED 编码器抢显存,而每段只推一次。
+    """
+
+    def __init__(self):
+        import onnxruntime as ort
+        chain = chain_module()
+        self.chain = chain
+        sys.path.insert(0, str(ONNX_VAD_DIR))
+        from infer_onnx import FireRedVadOnnx
+
+        _orig = ort.InferenceSession
+
+        def _vad_session(path_or_bytes, sess_options=None, *a, **kw):
+            # vendor 的 infer_onnx.py 建会话时既没设 intra_op_num_threads(ORT 的 0 =
+            # 吃满所有物理核),也没指定 providers —— 装了 onnxruntime-gpu 时它自己会挑
+            # CUDA。VAD 只有 2.4 MB 权重、每个文件对整条音频提一次特征,放 CPU 更划算,
+            # 而且"绝不用核显"这条要求最好处处都设防。这里临时替换工厂,不改 vendor 文件
+            # (它是上游哈希锁定的原件,改了升级会冲突)。
+            so = sess_options if sess_options is not None else ort.SessionOptions()
+            if not getattr(so, "intra_op_num_threads", 0):
+                so.intra_op_num_threads = ONNX_VAD_THREADS
+            kw.setdefault("providers", ["CPUExecutionProvider"])
+            return _orig(path_or_bytes, sess_options=so, *a, **kw)
+
+        t_all = time.perf_counter()
+        try:
+            ort.InferenceSession = _vad_session
+            self.vad = FireRedVadOnnx(model_dir=str(ONNX_VAD_DIR))
+        finally:
+            ort.InferenceSession = _orig
+        t_vad = time.perf_counter() - t_all
+
+        t0 = time.perf_counter()
+        self.asr = chain.build_recognizer(
+            "aed", ONNX_ASR_THREADS, mode=ONNX_MODE, cache=ONNX_CACHE_LEN,
+            graph=ONNX_GRAPH, provider=ONNX_PROVIDER,
+            dec_provider="cuda" if ONNX_DEC_ON_GPU else None)
+        t_asr = time.perf_counter() - t0
+        # 装的是 onnxruntime-gpu ≠ 真的跑在卡上:CUDA/cuDNN 运行库不齐时 ORT 只打一行
+        # 警告就把会话整体退回 CPU。必须读 get_providers() 的实际结果,否则就是
+        # "说好用 N 卡、实际在 CPU 上跑一整夜"而没人看得出来。
+        if ONNX_PROVIDER == "cuda" and "CUDAExecutionProvider" not in self.asr.enc_ep:
+            raise RuntimeError(
+                f"请求了 cuda 但编码器实际落在 {self.asr.enc_ep}:"
+                f"装的是 CPU 版 onnxruntime,或 CUDA/cuDNN 运行库不齐(看 ORT 的警告行)")
+        t0 = time.perf_counter()
+        self.punc = chain.Punc(threads=ONNX_PUNC_THREADS)
+        t_punc = time.perf_counter() - t0
+        logger.info(f"ONNX 主链加载:VAD {t_vad:.1f}s + AED({ONNX_GRAPH}/{ONNX_MODE}, "
+                    f"{self.asr.weight_mb} MB) {t_asr:.1f}s + Punc {t_punc:.1f}s,"
+                    f"合计 {time.perf_counter() - t_all:.1f}s")
+        logger.info(f"执行提供者:enc={self.asr.enc_ep} dec={self.asr.dec_ep} "
+                    f"punc={self.punc.ep}(VAD 恒定 CPU)")
+
+    def segments(self, wav, sr):
+        w16 = np.rint(np.clip(wav, -1.0, 1.0) * 32768.0).clip(-32768, 32767).astype(np.int16)
+        feat = self.vad._extract_features(w16)
+        probs = self.vad._run_model(feat)
+        decisions = self.vad.postprocessor.process(probs.tolist())
+        return self.vad.postprocessor.decisions_to_segments(decisions, len(wav) / sr)
+
+    def transcribe(self, path):
+        """一个文件走完 VAD → AED → Punc。返回 (文本, 统计);文本 "" = 无语音。"""
+        t0 = time.perf_counter()
+        wav, sr = self.chain.load_audio(path)
+        dur = len(wav) / sr
+        segs = self.segments(wav, sr)
+        speech = sum(e - s for s, e in segs)
+        texts, n_trunc = [], 0
+        for s, e in segs:
+            seg = wav[int(s * sr): int(e * sr)]
+            if seg.size < int(0.1 * sr):
+                continue
+            r = self.asr.transcribe_wav(seg, sr)
+            n_trunc += bool(r["truncated"])
+            texts.append(r["text"].strip())
+        raw = "".join(texts)
+        if n_trunc:
+            logger.warning(f"{os.path.basename(str(path))}:{n_trunc} 段撞上 cache 上限被截断")
+        if raw and self.punc is not None:
+            raw = "".join(self.punc.add(x) for x in texts)
+        return raw, {"dur": round(dur, 2), "speech": round(speech, 2),
+                     "segs": len(segs), "sec": round(time.perf_counter() - t0, 2),
+                     "trunc": n_trunc}
+
+
+def chain_engine():
+    """惰性建一次 ONNX 主链(几个 GB 的会话,建起来要几十秒)。
+
+    建不起来就整轮降级到 crispasr 主链并把原因记着 —— 宁可慢,不能把文件判成失败:
+    失败进隔离区之后这批就再也不会被扫到,而"权重缺一件"和"音频本身坏了"在下游看不出区别。
+    """
+    global _chain_engine, _chain_fatal
+    with _chain_lock:
+        if _chain_engine is None and not _chain_fatal:
+            try:
+                _chain_engine = OnnxChain()
+            except Exception as e:
+                _chain_fatal = f"{type(e).__name__}:{e}"
+                logger.critical(f"ONNX 主链起不来,本轮改走 crispasr 主链:{_chain_fatal}")
+        return _chain_engine
+
+
+def onnx_leg_setup() -> int:
+    """PRIMARY_LEG="onnx" 的起批前校验。返回 0 = 通过,2 = 致命(不启动)。
+
+    这里的判据是"会不会静默降级",不是"文件在不在":
+      · 三张会话【真建一次】而不是查文件名 —— 缺哪张图、CUDA 请求了却落回 CPU、
+        vendor 的 infer_onnx 换了接口,只有真建才看得见;建好的是进程级单例,
+        起批前建和跑第一个文件时建是同一份,不重复花那几十秒。
+      · 起批前拒绝启动,而不是等 chain_engine() 失败后整轮偷偷改走 crispasr:那个降级
+        是给"跑到一半卡子坏了"准备的兜底,不是给"配置本来就不对"准备的。
+    """
+    if ONNX_PROVIDER not in ("cpu", "cuda"):
+        logger.critical(f'ONNX_PROVIDER={ONNX_PROVIDER!r} 只认 "cpu" | "cuda":'
+                        f'DirectML / OpenVINO 会挑中 AMD 核显,本链禁用')
+        return 2
+    if not os.path.isfile(GATE_VAD_MODEL):
+        logger.critical(f"闸门 VAD 模型不存在:{GATE_VAD_MODEL}\n"
+                        f"  闸门没有语音段就只能拿原始前 15 s 去判,静音开头的外语文件会判错")
+        return 2
+    if not os.path.isfile(CRISPASR_LID_MODEL):
+        logger.critical(f"闸门判别模型不存在:{CRISPASR_LID_MODEL}\n"
+                        f"  -dl 判不出语种 = 所有文件都按主链跑,AED 会对范围外语种编造汉字")
+        return 2
+    for d in (ONNX_MODELS_DIR, ONNX_VAD_DIR, ONNX_PUNC_DIR):
+        if d and not os.path.isdir(d):
+            logger.critical(f"ONNX 模型目录不存在:{d}(补全资源跑 onnx/fetch_assets.py)")
+            return 2
+    try:
+        chain_module()
+    except Exception as e:
+        logger.critical(f"ONNX 链路代码/依赖起不来({ONNX_DIR}):{type(e).__name__}:{e}\n"
+                        f"  要么按 onnx/requirements*.txt 装齐,要么把 PRIMARY_LEG 改回 \"crispasr\"")
+        return 2
+    if chain_engine() is None:
+        logger.critical(f"ONNX 主链建不起来:{_chain_fatal}\n"
+                        f"  修好后重跑,或把 PRIMARY_LEG 改成 \"crispasr\" 走原来的两条腿")
+        return 2
+    logger.info(f"主链:FireRedASR2S ONNX 全链路(VAD+AED+Punc 常驻),"
+                f"provider={ONNX_PROVIDER} 图={ONNX_GRAPH} 模式={ONNX_MODE}")
+    logger.info(f"语种闸门:crispasr silero VAD 导段 + whisper-tiny -dl"
+                f"({os.path.basename(GATE_VAD_MODEL)} + {os.path.basename(CRISPASR_LID_MODEL)})")
+    return 0
+
+
+def gate_selfcheck(candidates: list) -> str:
+    """拿前几个待处理文件实跑一次闸门,确认【能抓到判别行】。返回 '' = 通过。
+
+    这一层必须实测而不能只查文件:闸门坏了不会产生任何错误 —— crispasr 照常返回 0,
+    只是 stderr 里没有那行 `auto-detected language: xx (p=...)`,于是每个文件都判成
+    "在范围内",整批外语素材被 AED 编成汉字并正常落盘,下游看不出区别(与 crispasr
+    筛子那个 --no-prints 瞎掉的老坑同源)。逐个试,试出结论就放行。
+    """
+    tried = []
+    for f in candidates:
+        with staged_inputs([f]) as paths:
+            gate = gate_language(paths[f])
+        if gate["code"]:
+            logger.info(f"闸门自检通过:{f.name} → {gate['why']}")
+            return ""
+        tried.append(f"{f.name}:{gate['why']}")
+    return ("闸门跑不出语种结论,已试 " + str(len(tried)) + " 个文件:\n  "
+            + "\n  ".join(tried) +
+            "\n  继续跑等于所有文件都按主链走,范围外的语种会被 AED 编造。"
+            "\n  查 CRISPASR_EXE 能否 -dl、GATE_THREADS/GATE_TIMEOUT_SEC 是否过短")
+
+
+def _onnx_one(file_path: Path, staged: str = None):
+    """主链跑一个文件,返回 (文本, 错误)。与 _crispasr_one 同一份契约。
+
+    staged 是批量入口已经建好的 ASCII 硬链接路径:闸门那两次 crispasr 调用【必须】走它
+    (crispasr 是 ANSI 程序,argv 经系统 ACP 转换,文件名里 GBK 表示不了的字符会变成 '?',
+    路径随之失效),链路侧也顺带用它 —— libsndfile 在 Windows 上打不开非 ASCII 路径,
+    这与 crispasr 那个坑同源,暂存区一次解决两处。
+    """
+    eng = chain_engine()
+    if eng is None:
+        return _crispasr_one(file_path, ENGINE_PRIMARY)
+    src = staged or str(file_path)
+    try:
+        text, st = eng.transcribe(src)
+    except Exception as e:
+        # 读不了音频的容器交给 crispasr 的同一个模型:它自带 ffmpeg 解码,不换引擎。
+        logger.warning(f"ONNX 链处理 {file_path.name} 失败,转 crispasr {ENGINE_PRIMARY}:"
+                       f"{type(e).__name__}:{e}")
+        return _crispasr_one(file_path, ENGINE_PRIMARY)
+    logger.info(f"ONNX 链 {file_path.name}:音频 {st['dur']}s / 语音 {st['speech']}s / "
+                f"{st['segs']} 段 / 用时 {st['sec']}s"
+                + (f" / 截断 {st['trunc']} 段" if st["trunc"] else ""))
+    return text, None
+
+
+def transcribe_batch_onnx(files: list, on_done=None, flagged=None):
+    """主链那一批:逐文件先过闸门,范围内的交给 ONNX 全链路,范围外的记进 flagged。
+
+    与 _crispasr_batch 返回同一份契约 (results, error),process_batch 因此不用改形状:
+      · results[f] = 文本(含合法空串) ⇒ 已产出;
+      · f 在 flagged 里 ⇒ 由 process_batch 攒成兜底轮换 crispasr qwen3 重跑;
+      · 两处都没有 ⇒ 没产出,进逐文件重跑。
+    模型常驻进程,所以这里不需要 crispasr 那套"一次调用吃掉整批"的攒批逻辑,也不需要在
+    stderr 里对号 —— 语种是【调用主链之前】按文件独立判的,天然不会错位。
+    每跑完一个文件就回调 on_done,批内实时结算/删源文件的原行为不变。
+    """
+    if flagged is None:
+        flagged = set()
+    eng = chain_engine()
+    if eng is None:
+        return _crispasr_batch(files, on_done=on_done, engine=ENGINE_PRIMARY,
+                               flagged=flagged)
+    results = {}
+    codes = {}
+    with staged_inputs(files) as paths:
+        for i, f in enumerate(files):
+            if stop_requested():
+                logger.info(f"已请求停止,主链在第 {i} 个文件处收工(已产出 {len(results)} 个)")
+                break
+            gate = gate_language(paths[f])
+            code = gate["code"]
+            if code:
+                codes[i] = (code, gate["why"])
+            if code and not _in_aed_range(code):
+                flagged.add(f)
+                logger.warning(f"语种闸门 [{f.name}] = {gate['why']} —— 不在 AED 可判范围,"
+                               f"主链不跑,待 {ENGINE_FALLBACK} 兜底")
+                continue
+            if not code:
+                logger.warning(f"语种闸门 [{f.name}] 没结论({gate['why']}),按主链跑")
+            if gate["readable"]:
+                text, error = _onnx_one(f, staged=paths[f])
+            else:
+                # 容器解不了不等于文件坏了:交给 crispasr 的【同一个】主引擎模型,
+                # 它内部带 ffmpeg(m4a / mp4 / aac),不换语种、不换引擎。
+                logger.info(f"语种闸门 [{f.name}] = {gate['why']};"
+                            f"链路读不了这个容器,按 {ENGINE_PRIMARY} 走 crispasr")
+                text, error = _crispasr_one(f, ENGINE_PRIMARY)
+            if error:
+                logger.error(f"主链失败 [{f.name}]:{error}")
+                continue
+            results[f] = text
+            if on_done:
+                on_done(f, text)
+    _lid_summary(codes, files, f"{ENGINE_PRIMARY}/onnx")
+    return results, None
+
+
+def transcribe_batch(files: list, on_done=None, engine: str = ENGINE_PRIMARY,
+                     flagged=None):
+    """按 PRIMARY_LEG 分发到 ONNX 主链或 crispasr。兜底引擎永远走 crispasr。"""
+    if PRIMARY_LEG == "onnx" and engine == ENGINE_PRIMARY:
+        return transcribe_batch_onnx(files, on_done=on_done, flagged=flagged)
+    return _crispasr_batch(files, on_done=on_done, engine=engine, flagged=flagged)
+
+
+def transcribe_one(file_path: Path, engine: str = ENGINE_PRIMARY):
+    """单文件版的同一分发。逐文件重跑阶段用得上:flagged 的文件已经在 process_batch
+    里被指派成兜底引擎,不会被送到主链上重复过闸门。"""
+    if PRIMARY_LEG == "onnx" and engine == ENGINE_PRIMARY:
+        with staged_inputs([file_path]) as paths:
+            src = paths[file_path]
+            gate = gate_language(src)
+            if gate["code"] and not _in_aed_range(gate["code"]):
+                logger.warning(f"语种闸门 [{file_path.name}] = {gate['why']}"
+                               f" —— 不在 AED 可判范围,改用 {ENGINE_FALLBACK}")
+                return _crispasr_one(file_path, ENGINE_FALLBACK)
+            if not gate["code"]:
+                logger.warning(f"语种闸门 [{file_path.name}] 没结论({gate['why']}),按主链跑")
+            if gate["readable"]:
+                return _onnx_one(file_path, staged=src)
+            logger.info(f"主链 [{file_path.name}] 换 crispasr 解容器(链路读不了这个格式)")
+            return _crispasr_one(file_path, ENGINE_PRIMARY)
+    return _crispasr_one(file_path, engine)
 
 
 # ==================== 主处理 ====================
@@ -1625,8 +2235,9 @@ def main_loop() -> int:
         logger.info(f"引擎 {key}:{eng['label']} / {eng['backend']}"
                     f" [{os.path.basename(eng['model'])}, {punc}]")
     if USE_LID_FALLBACK:
-        logger.info(f"策略:{ENGINE_PRIMARY} 主力,{ENGINE_FALLBACK} 兜底"
-                    f"(前置判别判到 AED 范围外的文件换引擎重跑)")
+        leg = ("FireRedASR2S ONNX 全链路" if PRIMARY_LEG == "onnx" else "crispasr")
+        logger.info(f"策略:{ENGINE_PRIMARY} 主力({leg}),{ENGINE_FALLBACK} 兜底"
+                    f"(语种判到 AED 范围外的文件换引擎重跑)")
     else:
         logger.info(f"策略:只用 {ENGINE_PRIMARY},判到范围外仅在日志里报一句")
 
@@ -1659,6 +2270,10 @@ def main_loop() -> int:
     else:
         logger.warning(f"CRISPASR_LANGUAGE={CRISPASR_LANGUAGE!r} 不是 auto:"
                        f"前置判别器不会挂上({ENGINE_FALLBACK} 兜底也随之失效)")
+    if PRIMARY_LEG == "onnx":
+        rc = onnx_leg_setup()
+        if rc:
+            return rc
     if STOP_FILE.exists():
         try:
             STOP_FILE.unlink()
@@ -1674,6 +2289,12 @@ def main_loop() -> int:
         return 0
 
     stats = Stats()
+    if PRIMARY_LEG == "onnx":
+        head = [f for fl in groups.values() for f in fl][:GATE_SELFCHECK_FILES]
+        why = gate_selfcheck(head)
+        if why:
+            logger.critical(why)
+            return 2
     for group_key, file_list in groups.items():
         process_group(group_key, file_list, rules, stats)
         if stats.stopped:

@@ -1,14 +1,46 @@
-# 跑 crisper-xhs-qwen-asr.py 只需要这一件第三方库，其余全是标准库。
+# 跑 crisper-xhs-qwen-asr.py 的第三方库。分两层，因为驱动现在有两段代码：
+# crispasr.exe 那两条腿（python 侧只负责拼命令行、读 stderr），和本包 onnx/ 里的
+# FireRedASR2S ONNX 全链路（python 侧就是推理本身）。
 #
 # 驱动本身只用 ctypes/logging/os/re/signal/subprocess/sys/tempfile/threading/time/
-# urllib.request/contextlib/datetime/pathlib（+ Windows 上的 msvcrt、Linux 上的 fcntl），
+# urllib.request/contextlib/datetime/pathlib(+ itertools，暂存链接的自增序号)，
+# 加上 Windows 的 msvcrt 与 POSIX 的 fcntl 抢 .lock、ctypes 包 Job Object，
 # ntfy 推送走 urllib，不引第三方 HTTP 客户端。
-# 真正的重活全在 crispasr.exe（C/C++ 二进制，见 assets.json）里，pip 里没有它，
-# 也不需要 CUDA 相关的 python 包 —— ctranslate2 那套只属于 faster_whisper/ 那条链。
+# send2trash 是必需件：驱动顶部的 `from send2trash import send2trash` 是模块级 import，
+# 装不上就直接 ImportError 起不来。
 #
-# send2trash 是必需件：驱动第 135 行是模块级 import，装不上就直接 ImportError 起不来。
-# 纯 Python，无编译依赖。
-#
-# 解释器：3.13 实测在跑（作者生产机用的是一份免安装/embeddable 3.13，放在自己的 asr 目录里）。
-# 2.1.0 = 2026-10-07 本机 pip 元数据里实际在位的版本。
+# 关键一条：PRIMARY_LEG 默认就是 "onnx"，所以下面那 6 件【现在也是必需件】，
+# 不是可选项。驱动 main_loop() 会在起批前 import 一次并当场报错退出（rc=2），
+# 不会等跑到第一个文件才发现。想只跑 crispasr 那两条腿，把 PRIMARY_LEG 改成
+# "crispasr"，那 6 件就可以不装（onnx_leg_setup() 那条自检也随之整体跳过）。
+
 Send2Trash==2.1.0
+
+# ---------- ONNX 主链（PRIMARY_LEG="onnx" 时必需）----------
+# 与 cpu 分支的 onnx/requirements.txt 同一套 pins，逐字对拍就是在这套上过的
+# （10-06 产线 CPython 3.12.15 + 10-06 干净机 CPython 3.13.11 两轮都跑通）。
+# 版本、为什么钉 1.20.1、punc 的 4-bit 坑，都写在 onnx/requirements.txt 里，那里是单一权威。
+numpy==2.5.3
+onnxruntime==1.20.1
+soundfile==0.14.0
+scipy==1.18.1
+tokenizers==0.23.2
+kaldi-native-fbank==1.22.3
+kaldiio==2.18.1
+
+# ---------- 想用 N 卡（ONNX_PROVIDER="cuda"）时的替换 ----------
+# 上面钉的 onnxruntime==1.20.1 是【纯 CPU】的包，它没有 CUDA EP，装了 cuda 也只会
+# 在 get_providers() 里露出来（驱动会为此直接抛错停下，不会闷头用 CPU 跑完整夜）。
+# 换成 GPU 包时要同时改三件事，缺一不可：
+#   1) pip uninstall onnxruntime && pip install onnxruntime-gpu==<版本>
+#      —— 两个包同名模块 onnxruntime，共存时谁赢不确定，必须卸干净。
+#   2) 版本只能 >=1.21.0。实测 PyPI 上 onnxruntime-gpu 没有 1.20.1 这个 release
+#      （https://pypi.org/pypi/onnxruntime-gpu/1.20.1/json = HTTP 404，10-09 查的），
+#      所以"和 CPU 侧钉同一个版本号"这条路不存在，只能接受跨版本。
+#   3) CUDA 12 + cuDNN 9 的运行库要能被 onnxruntime_gpu.dll 搜到（它在 wheel 里自带
+#      一部分，剩下的看 NVIDIA 驱动与 PATH）。
+# 已知的坑：1.21 起在部分 Windows 机器上 import 阶段就崩（0xC0000142 / "DLL 初始化
+# 例程失败"），根因是 System32 的 VC 运行库太旧、缺 vcruntime140_threads.dll ——
+# 那是【校机】10-05 实测的形态。换卡跑之前先 pip show onnxruntime-gpu 再
+# python -c "import onnxruntime" 单独验一次，别把它留给批次去撞。
+# 这条链【不列】DirectML / OpenVINO：那两个能挑中 AMD 核显，而驱动只允许 CPU 或 N 卡。
